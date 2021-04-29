@@ -78,6 +78,7 @@ def detect(opt):
         
         t2 = time_synchronized()
         print("Inference time: %f s" % ((t2-t1)/100))
+        # ------------------------------------------ End inference ----------------------------------------------
 
         # Apply Classifier
         if classify:
