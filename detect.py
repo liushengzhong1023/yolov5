@@ -56,7 +56,7 @@ def detect(opt):
     names = model.module.names if hasattr(model, 'module') else model.names
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
-    # Run inference
+    # ------------------------------------------ Run inference ----------------------------------------------
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
     t0 = time.time()
@@ -69,11 +69,15 @@ def detect(opt):
 
         # Inference
         t1 = time_synchronized()
-        pred = model(img, augment=opt.augment)[0]
 
-        # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        for _ in range(100):
+            pred = model(img, augment=opt.augment)[0]
+            # Apply NMS
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, 
+                                       classes=opt.classes, agnostic=opt.agnostic_nms)
+        
         t2 = time_synchronized()
+        print("Inference time: %f s" % ((t2-t1)/100))
 
         # Apply Classifier
         if classify:
@@ -152,9 +156,9 @@ def detect(opt):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='yolov5s.pt', help='model.pt path(s)')
+    parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=1080, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
@@ -175,12 +179,14 @@ if __name__ == '__main__':
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     opt = parser.parse_args()
     print(opt)
-    check_requirements(exclude=('pycocotools', 'thop'))
+    # check_requirements(exclude=('pycocotools', 'thop'))
 
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov5s.pt', 'yolov5m.pt', 'yolov5l.pt', 'yolov5x.pt']:
+                print(opt.weights)
                 detect(opt=opt)
                 strip_optimizer(opt.weights)
+                print()
         else:
             detect(opt=opt)
