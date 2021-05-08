@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 import torch
+import numpy as np
 import torch.backends.cudnn as cudnn
 from numpy import random
 
@@ -33,9 +34,12 @@ def detect(opt):
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
-    imgsz = check_img_size(imgsz, s=stride)  # check img_size
+    print("Max stride", stride)
+    imgsz = check_img_size(imgsz, s=stride)  # check img_size. Verify img_size is a multiple of stride
+
+    # the model is FP16 for GPU
     if half:
-        model.half()  # to FP16
+        model.half()
 
     # Second-stage classifier
     classify = False
@@ -56,14 +60,26 @@ def detect(opt):
     names = model.module.names if hasattr(model, 'module') else model.names
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
-    # ------------------------------------------ Run inference ----------------------------------------------
+    print("------------------------------ Run inference ------------------------------")
+    # warmup run, doesn't affect the model efficacy
     if device.type != 'cpu':
+        # convert the random data type to the type of the model parameters
+        # we can feed any sizes as multiples of 32 here to the model
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+
     t0 = time.time()
     for path, img, im0s, vid_cap in dataset:
+        # convert the numpy array to the torch tensor, and specify its device (gpu-0)
+        # the input img is just a numpy ndarray here
         img = torch.from_numpy(img).to(device)
-        img = img.half() if half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+
+        # uint8 to fp16/32, the type is fp16 by default, torch.cuda.HalfTensor
+        # self.half() is equivalent to self.to(torch.float16)
+        # self.float() is equivalent to self.to(torch.float32)
+        img = img.half() if half else img.float()
+
+        # normalize the value to [0, 1]
+        img /= 255.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
@@ -78,7 +94,7 @@ def detect(opt):
         
         t2 = time_synchronized()
         print("Inference time: %f s" % ((t2-t1)/100))
-        # ------------------------------------------ End inference ----------------------------------------------
+        print("------------------------------ End inference ------------------------------")
 
         # Apply Classifier
         if classify:
@@ -179,7 +195,8 @@ if __name__ == '__main__':
     parser.add_argument('--hide-labels', default=False, action='store_true', help='hide labels')
     parser.add_argument('--hide-conf', default=False, action='store_true', help='hide confidences')
     opt = parser.parse_args()
-    print(opt)
+
+    # check the package requirements
     # check_requirements(exclude=('pycocotools', 'thop'))
 
     with torch.no_grad():
