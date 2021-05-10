@@ -188,6 +188,7 @@ class LoadImages:  # for inference
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
 
+        # img is the padded version in RGB, while img0 is the raw image in BGR
         return path, img, img0, self.cap
 
     def new_video(self, path):

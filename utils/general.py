@@ -454,7 +454,11 @@ def wh_iou(wh1, wh2):
 
 def non_max_suppression(prediction, conf_thres=0.25, iou_thres=0.45, classes=None, agnostic=False, multi_label=False,
                         labels=()):
-    """Runs Non-Maximum Suppression (NMS) on inference results
+    """Runs Non-Maximum Suppression (NMS) on inference results.
+       THe NMS on each image is performed sequentially.
+
+    Input:
+        prediction: output of the model,
 
     Returns:
          list of detections, on (n,6) tensor per image [xyxy, conf, cls]

@@ -68,6 +68,8 @@ def detect(opt):
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
 
     t0 = time.time()
+
+    # img is the padded version in RGB, while img0 is the raw image in BGR
     for path, img, im0s, vid_cap in dataset:
         # convert the numpy array to the torch tensor, and specify its device (gpu-0)
         # the input img is just a numpy ndarray here
@@ -80,6 +82,8 @@ def detect(opt):
 
         # normalize the value to [0, 1]
         img /= 255.0
+
+        # add a new dimension at position-0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
 
@@ -87,13 +91,18 @@ def detect(opt):
         t1 = time_synchronized()
 
         for _ in range(100):
+            # return [
+            #   1) concated output bboxes, [batch_size, #bbox, 80(coco classes)+5],
+            #   2) list of output at each output layer with shape [batch_size, #anchor, h, w, 80+5]
             pred = model(img, augment=opt.augment)[0]
+            print(pred.shape)
+            print([e.shape for e in model(img, augment=opt.augment)[1]])
             # Apply NMS
-            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, 
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres,
                                        classes=opt.classes, agnostic=opt.agnostic_nms)
-        
+
         t2 = time_synchronized()
-        print("Inference time: %f s" % ((t2-t1)/100))
+        print("Inference time: %f s" % ((t2 - t1) / 100))
         print("------------------------------ End inference ------------------------------")
 
         # Apply Classifier
