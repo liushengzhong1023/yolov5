@@ -18,18 +18,15 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized
 
 # (height, width), sorted in increasing order of the height
 waymo_image_sizes = {
-    (64, 96): 32,
-    (128, 192): 32,
-    (256, 384): 16,
-    (480, 640): 12,
-    (640, 960): 8,
-    (640, 1280): 4,
+    (64, 64): 24,
+    (128, 128): 24,
+    (256, 256): 16,
+    (384, 384): 10,
+    (512, 512): 6,
     # the following mainly for merged scheduler
-    (640, 64): 8,
-    (640, 1920): 4,
-    (960, 96): 8,
-    (960, 1920): 4,
-    (1280, 160): 4,
+    (960, 160): 4,
+    (1280, 320): 4,
+    # full frame
     (1280, 1920): 2
 }
 
@@ -147,10 +144,11 @@ def profile_one_image_size(model, w, h, b, test_count, half, device):
 
 
 if __name__ == '__main__':
-    profile_path = '/home/sl29/DeepScheduling/result/yolov5_result/yolov5_profiles'
-    model_list = ['yolov5s', 'yolov5m', 'yolov5l', 'yolov5x']
+    profile_path = '/home/sl29/DeepScheduling/result/yolov5_result/yolov5_profiles_new'
+    # model_list = ['yolov5s', 'yolov5m', 'yolov5l', 'yolov5x']
+    model_list = ['yolov5m']
     machine_name = str(np.loadtxt(os.path.join(profile_path, 'machine.txt'), dtype=str))
-    dataset = 'kitti'
+    dataset = 'waymo'
 
     for model in model_list:
         profile_file = os.path.join(profile_path, model + '_' + dataset + '_' + machine_name + '.json')
