@@ -91,7 +91,7 @@ def detect(opt):
         t1 = time_synchronized()
 
         for _ in range(100):
-            # return [
+            # return
             #   1) concated output bboxes, [batch_size, #bbox, 80(coco classes)+5],
             #   2) list of output at each output layer with shape [batch_size, #anchor, h, w, 80+5]
             pred = model(img, augment=opt.augment)[0]
