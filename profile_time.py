@@ -144,9 +144,9 @@ def profile_one_image_size(model, w, h, b, test_count, half, device):
 
 
 if __name__ == '__main__':
-    profile_path = '/home/sl29/DeepScheduling/result/yolov5_result/yolov5_profiles_new'
-    # model_list = ['yolov5s', 'yolov5m', 'yolov5l', 'yolov5x']
-    model_list = ['yolov5m']
+    profile_path = '/home/sl29/DeepScheduling/result/yolov5_result/yolov5_profiles'
+    model_list = ['yolov5s', 'yolov5m', 'yolov5l', 'yolov5x']
+    # model_list = ['yolov5m']
     machine_name = str(np.loadtxt(os.path.join(profile_path, 'machine.txt'), dtype=str))
     dataset = 'waymo'
 
