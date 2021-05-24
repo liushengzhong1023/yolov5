@@ -22,7 +22,7 @@ waymo_image_sizes = {
     (128, 128): 24,
     (256, 256): 16,
     (384, 384): 10,
-    (512, 512): 6,
+    (512, 512): 8,
     # the following mainly for merged scheduler
     (960, 160): 4,
     (1280, 320): 4,
@@ -199,7 +199,7 @@ if __name__ == '__main__':
                             continue
 
                 mean_inference_time, mean_postprocess_time = profile_one_image_size(model, w, h, b,
-                                                                                    100, half, device)
+                                                                                    500, half, device)
                 image_size_times[w][h][b] = {
                     'inference': mean_inference_time,
                     'postprocess': mean_postprocess_time
