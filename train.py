@@ -24,6 +24,11 @@ from tqdm import tqdm
 import test  # import test.py to get mAP after each epoch
 from models.experimental import attempt_load
 from models.yolo import Model
+
+import sys
+sys.path.append(os.getcwd() + '/..')
+from pytorch_endecoder.DeepCOD_sep_pytorch import DeepCOD, get_loss
+
 from utils.autoanchor import check_anchors
 from utils.datasets import create_dataloader
 from utils.general import labels_to_class_weights, increment_path, labels_to_image_weights, init_seeds, \
@@ -37,6 +42,8 @@ from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
 logger = logging.getLogger(__name__)
 
+# torch.set_num_threads(1)
+
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
@@ -48,6 +55,8 @@ def train(hyp, opt, device, tb_writer=None):
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
     last = wdir / 'last.pt'
     best = wdir / 'best.pt'
+    last_deepcod_weights = wdir / 'last_deepcod.pt'
+    best_deepcod_weights = wdir / 'best_deepcod.pt'
     results_file = save_dir / 'results.txt'
 
     # Save run settings
@@ -80,7 +89,7 @@ def train(hyp, opt, device, tb_writer=None):
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, opt.data)  # check
 
     # Model
-    pretrained = weights.endswith('.pt')
+    pretrained = weights.endswith('.pt')  # pretrained is true if a .pt file is provided
     if pretrained:
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
@@ -98,8 +107,18 @@ def train(hyp, opt, device, tb_writer=None):
     train_path = data_dict['train']
     test_path = data_dict['val']
 
-    # Freeze
-    freeze = []  # parameter names to freeze (full or partial)
+    # define and load the DeepCOD model
+    if opt.deepcod_option == 'fine_tune_deepcod':
+        deepcod_model = DeepCOD().to(device)
+        if opt.deepcod_weights.endswith('.pt'):
+            deepcod_model.load_state_dict(torch.load(opt.deepcod_weights))
+
+    # Freeze, freeze the parameters for YOLO when we fine-tune the deepCOD model
+    if opt.deepcod_option == 'fine_tune_deepcod':
+        freeze = ['model.%s.' % x for x in range(25)]  # parameter names to freeze (full or partial)
+    else:
+        freeze = []  # parameter names to freeze (full or partial)
+
     for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
@@ -130,6 +149,11 @@ def train(hyp, opt, device, tb_writer=None):
     optimizer.add_param_group({'params': pg2})  # add pg2 (biases)
     logger.info('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
     del pg0, pg1, pg2
+
+    # add deepcod parameters
+    if opt.deepcod_option == 'fine_tune_deepcod':
+        pg3 = deepcod_model.parameters()
+        optimizer.add_param_group({'params': pg3})
 
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
@@ -300,21 +324,54 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Forward
             with amp.autocast(enabled=cuda):
-                pred = model(imgs)  # forward
-                loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+                if opt.deepcod_option == 'fine_tune_deepcod':
+                    _, _, reconst_imgs = deepcod_model(imgs)
+                    reconst_imgs = reconst_imgs.float()
+                    reconst_loss = opt.reconst_loss_scale * get_loss(deepcod_model, imgs, reconst_imgs)
+
+                    # print(imgs.type(), imgs.shape)
+                    # print(reconst_imgs.type(), reconst_imgs.shape)
+
+                    # imgs: [batch, channel, height, width]
+                    # pred = model(imgs)  # forward
+                    pred = model(reconst_imgs)
+                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+
+                    # add reconst loss
+                    loss += reconst_loss
+                else:
+                    pred = model(imgs)  # forward
+                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
+
                 if rank != -1:
                     loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
                     loss *= 4.
 
             # Backward
+            '''
+            Scales loss. Calls backward() on scaled loss to create scaled gradients.
+            '''
             scaler.scale(loss).backward()
 
             # Optimize
             if ni % accumulate == 0:
+                '''
+                # scaler.step() first unscales gradients of the optimizer's params.
+                # If gradients don't contain infs/NaNs, optimizer.step() is then called,
+                # otherwise, optimizer.step() is skipped.
+                '''
                 scaler.step(optimizer)  # optimizer.step
+
+                # Updates the scale for next iteration.
                 scaler.update()
+
+                # Since the backward() function accumulates gradients,
+                # and you don’t want to mix up gradients between minibatches, you have to zero them out
+                # at the start of a new minibatch.
                 optimizer.zero_grad()
+
+                # exponential moving average
                 if ema:
                     ema.update(model)
 
@@ -389,24 +446,30 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Save model
             if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                ckpt = {'epoch': epoch,
-                        'best_fitness': best_fitness,
-                        'training_results': results_file.read_text(),
-                        'model': deepcopy(model.module if is_parallel(model) else model).half(),
-                        'ema': deepcopy(ema.ema).half(),
-                        'updates': ema.updates,
-                        'optimizer': optimizer.state_dict(),
-                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+                if opt.deepcod_option == 'fine_tune_deepcod':
+                    torch.save(deepcod_model.state_dict(), last_deepcod_weights)
 
-                # Save last, best and delete
-                torch.save(ckpt, last)
-                if best_fitness == fi:
-                    torch.save(ckpt, best)
-                if wandb_logger.wandb:
-                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                        wandb_logger.log_model(
-                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                del ckpt
+                    if best_fitness == fi:
+                        torch.save(deepcod_model.state_dict(), best_deepcod_weights)
+                else:
+                    ckpt = {'epoch': epoch,
+                            'best_fitness': best_fitness,
+                            'training_results': results_file.read_text(),
+                            'model': deepcopy(model.module if is_parallel(model) else model).half(),
+                            'ema': deepcopy(ema.ema).half(),
+                            'updates': ema.updates,
+                            'optimizer': optimizer.state_dict(),
+                            'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
+
+                    # Save last, best and delete
+                    torch.save(ckpt, last)
+                    if best_fitness == fi:
+                        torch.save(ckpt, best)
+                    if wandb_logger.wandb:
+                        if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                            wandb_logger.log_model(
+                                last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                    del ckpt
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -455,12 +518,12 @@ def train(hyp, opt, device, tb_writer=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
-    parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/coco128.yaml', help='data.yaml path')
+    parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
+    parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
+    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=300)
-    parser.add_argument('--batch-size', type=int, default=16, help='total batch size for all GPUs')
+    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -471,14 +534,14 @@ if __name__ == '__main__':
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
-    parser.add_argument('--project', default='runs/train', help='save to project/name')
+    parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
+    parser.add_argument('--project', default='offloading_runs/train', help='save to project/name')
     parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
@@ -489,6 +552,14 @@ if __name__ == '__main__':
     parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+
+    # for offloading
+    parser.add_argument('-deepcod_weights', type=str, default='../pytorch_endecoder/models/coco_fix_regularizer.pt',
+                        help='initial weights path for enc-decoder')
+    parser.add_argument('-deepcod_option', type=str, default='fine_tune_deepcod',
+                        help='Option of dealing with deepcod model')
+    parser.add_argument('-reconst_loss_scale', type=float, default=10.,
+                        help='Scale for the reconstruction loss.')
     opt = parser.parse_args()
 
     # Set DDP variables
@@ -497,7 +568,7 @@ if __name__ == '__main__':
     set_logging(opt.global_rank)
     if opt.global_rank in [-1, 0]:
         check_git_status()
-        check_requirements()
+        # check_requirements()
 
     # Resume
     wandb_run = check_wandb_resume(opt)
