@@ -16,8 +16,7 @@ download: bash data/scripts/get_coco.sh
 
 #train: ../coco128/images/train2017/
 train: /home/sl29/data/COCO/images/train2017/
-#val: /home/sl29/data/COCO/images/val2017/
-val: /home/sl29/data/COCO/images/val_reconstructed_640
+val: /home/sl29/data/COCO/images/val2017/
 
 # number of classes
 nc: 80

@@ -3,11 +3,18 @@ import json
 import os
 from pathlib import Path
 from threading import Thread
+import torch.nn.functional as F
 
 import numpy as np
 import torch
 import yaml
 from tqdm import tqdm
+from torch.cuda import amp
+
+import sys
+
+sys.path.append(os.getcwd() + '/..')
+from pytorch_endecoder.DeepCOD_sep_pytorch import DeepCOD
 
 from models.experimental import attempt_load
 from utils.datasets import create_dataloader
@@ -28,7 +35,7 @@ def test(data,
          single_cls=False,
          augment=False,
          verbose=False,
-         model=None,
+         yolo_model=None,
          dataloader=None,
          save_dir=Path(''),  # for saving images
          save_txt=False,  # for auto-labelling
@@ -39,11 +46,16 @@ def test(data,
          compute_loss=None,
          half_precision=True,
          is_coco=False,
-         opt=None):
+         opt=None,
+         train_deepcod_option=None,
+         train_deepcod_model=None):
     # Initialize/load model and set device
-    training = model is not None
+    training = yolo_model is not None
     if training:  # called by train.py
-        device = next(model.parameters()).device  # get model device
+        device = next(yolo_model.parameters()).device  # get model device
+
+        if train_deepcod_option == 'fine_tune_deepcod':
+            deepcod_model = train_deepcod_model
 
     else:  # called directly
         set_logging()
@@ -54,9 +66,15 @@ def test(data,
         (save_dir / 'labels' if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
 
         # Load model
-        model = attempt_load(weights, map_location=device)  # load FP32 model
-        gs = max(int(model.stride.max()), 32)  # grid size (max stride)
+        yolo_model = attempt_load(weights, map_location=device)  # load FP32 model
+        gs = max(int(yolo_model.stride.max()), 32)  # grid size (max stride)
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
+
+        # define and load the DeepCOD model
+        if opt.deepcod_option == 'test_with_deepcod':
+            deepcod_model = DeepCOD().to(device)
+            if opt.deepcod_weights.endswith('.pt'):
+                deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
         # Multi-GPU disabled, incompatible with .half() https://github.com/ultralytics/yolov5/issues/99
         # if device.type != 'cpu' and torch.cuda.device_count() > 1:
@@ -65,10 +83,10 @@ def test(data,
     # Half
     half = device.type != 'cpu' and half_precision  # half precision only supported on CUDA
     if half:
-        model.half()
+        yolo_model.half()
 
     # Configure
-    model.eval()
+    yolo_model.eval()
     if isinstance(data, str):
         is_coco = data.endswith('coco.yaml')
         with open(data) as f:
@@ -82,17 +100,18 @@ def test(data,
     log_imgs = 0
     if wandb_logger and wandb_logger.wandb:
         log_imgs = min(wandb_logger.log_imgs, 100)
+
     # Dataloader
     if not training:
         if device.type != 'cpu':
-            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+            yolo_model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(yolo_model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
-        dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=True,
+        dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=False,
                                        prefix=colorstr(f'{task}: '))[0]
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
-    names = {k: v for k, v in enumerate(model.names if hasattr(model, 'names') else model.module.names)}
+    names = {k: v for k, v in enumerate(yolo_model.names if hasattr(yolo_model, 'names') else yolo_model.module.names)}
     coco91class = coco80_to_coco91_class()
     s = ('%20s' + '%12s' * 6) % ('Class', 'Images', 'Labels', 'P', 'R', 'mAP@.5', 'mAP@.5:.95')
     p, r, f1, mp, mr, map50, map, t0, t1 = 0., 0., 0., 0., 0., 0., 0., 0., 0.
@@ -106,21 +125,31 @@ def test(data,
         nb, _, height, width = img.shape  # batch size, channels, height, width
 
         with torch.no_grad():
-            # Run model
-            t = time_synchronized()
-            out, train_out = model(img, augment=augment)  # inference and training outputs
-            t0 += time_synchronized() - t
+            with amp.autocast(enabled=True):
+                # reconstruct first if needed
+                if (opt is not None and opt.deepcod_option == 'test_with_deepcod') or \
+                        (training and train_deepcod_option == 'fine_tune_deepcod'):
+                    _, _, reconst_img = deepcod_model(img)
+                    # Run model
+                    t = time_synchronized()
+                    out, train_out = yolo_model(reconst_img, augment=augment)  # inference and training outputs
+                    t0 += time_synchronized() - t
+                else:
+                    # Run model
+                    t = time_synchronized()
+                    out, train_out = yolo_model(img, augment=augment)  # inference and training outputs
+                    t0 += time_synchronized() - t
 
-            # Compute loss
-            if compute_loss:
-                loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
+                # Compute loss
+                if compute_loss:
+                    loss += compute_loss([x.float() for x in train_out], targets)[1][:3]  # box, obj, cls
 
-            # Run NMS
-            targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
-            lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
-            t = time_synchronized()
-            out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
-            t1 += time_synchronized() - t
+                # Run NMS
+                targets[:, 2:] *= torch.Tensor([width, height, width, height]).to(device)  # to pixels
+                lb = [targets[targets[:, 0] == i, 1:] for i in range(nb)] if save_hybrid else []  # for autolabelling
+                t = time_synchronized()
+                out = non_max_suppression(out, conf_thres, iou_thres, labels=lb, multi_label=True, agnostic=single_cls)
+                t1 += time_synchronized() - t
 
         # Statistics per image
         for si, pred in enumerate(out):
@@ -276,7 +305,7 @@ def test(data,
             print(f'pycocotools unable to run: {e}')
 
     # Return results
-    model.float()  # for training
+    yolo_model.float()  # for training
     if not training:
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ''
         print(f"Results saved to {save_dir}{s}")
@@ -286,16 +315,50 @@ def test(data,
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
 
 
+def test_pretrain_deepcod(deepcod_model, device, dataloader):
+    '''
+    The test function for pretraining the DeepCOD model. Only used in DeepCOD pre-training.
+    :param data:
+    :param weights:
+    :param batch_size:
+    :param imgsz:
+    :return:
+    '''
+    # # Half
+    # half = device.type != 'cpu'  # half precision only supported on CUDA
+    # if half:
+    #     deepcod_model.half()
+
+    # test loss
+    loss_sum = 0
+    iter_counter = 0
+    for batch_i, (img, targets, paths, shapes) in enumerate(tqdm(dataloader)):
+        img = img.to(device, non_blocking=True)
+        img = img.float()  # uint8 to fp16/32
+        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+
+        with torch.no_grad():
+            with amp.autocast(enabled=True):
+                _, _, reconst_img = deepcod_model(img)
+                iter_counter += 1
+                loss_sum += F.mse_loss(reconst_img, img)
+
+    # convert to float
+    # deepcod_model.float()
+
+    return loss_sum / (iter_counter + 1e-6)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
-    parser.add_argument('--batch-size', type=int, default=64, help='size of each image batch')
+    parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='0,1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -303,10 +366,20 @@ if __name__ == '__main__':
     parser.add_argument('--save-hybrid', action='store_true', help='save label+prediction hybrid results to *.txt')
     parser.add_argument('--save-conf', action='store_true', help='save confidences in --save-txt labels')
     parser.add_argument('--save-json', action='store_true', help='save a cocoapi-compatible JSON results file')
-    parser.add_argument('--project', default='runs/test', help='save to project/name')
+    parser.add_argument('--project', default='offloading_runs/test', help='save to project/name')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
+
+    # for offloading
+    parser.add_argument('-deepcod_weights', type=str, default='/home/tianshi/compressive_offloading_yolov5/src'
+                                                              '/offloading_pytorch/pytorch_endecoder/models/coco_tanh_'
+                                                              'no_regularizer.pt',
+                        help='initial weights path for enc-decoder')
+    parser.add_argument('-deepcod_option', type=str, default='test_with_deepcod',
+                        help='Option of dealing with deepcod model')
     opt = parser.parse_args()
+
+    # call the coco eval API if we are evaluating coco
     opt.save_json |= opt.data.endswith('coco.yaml')
     opt.data = check_file(opt.data)  # check file
     print(opt)
