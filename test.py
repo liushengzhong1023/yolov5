@@ -73,7 +73,7 @@ def test(data,
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
         # define and load the DeepCOD model
-        if opt.deepcod_option == 'test_with_deepcod':
+        if opt.deepcod_option == 'test_fine_tune_deepcod':
             deepcod_model = DeepCOD().to(device)
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
@@ -109,7 +109,7 @@ def test(data,
             yolo_model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(yolo_model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
         dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=False,
-                                       prefix=colorstr(f'{task}: '))[0]
+                                       prefix=colorstr(f'{task}: '), workers=1)[0]
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -129,7 +129,7 @@ def test(data,
         with torch.no_grad():
             with amp.autocast(enabled=True):
                 # reconstruct first if needed
-                if (opt is not None and opt.deepcod_option == 'test_with_deepcod') or \
+                if (opt is not None and opt.deepcod_option == 'test_fine_tune_deepcod') or \
                         (training and train_deepcod_option == 'fine_tune_deepcod'):
                     _, _, reconst_img = deepcod_model(img)
                     # Run model
@@ -394,7 +394,7 @@ if __name__ == '__main__':
     parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',
                         help='The path to save the reconstructed images.')
-    parser.add_argument('-deepcod_option', type=str, default='test_pretrain_deepcod',
+    parser.add_argument('-deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
     opt = parser.parse_args()
 
