@@ -41,6 +41,8 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
+# import torch.autograd.profiler as profiler
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,7 +80,7 @@ def pretrain_deepcod(hyp, opt, device):
 
     # Trainloader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, 32, opt,
-                                            hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
+                                            hyp=hyp, augment=False, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     nb = len(dataloader)  # number of batches
@@ -89,7 +91,7 @@ def pretrain_deepcod(hyp, opt, device):
                                    pad=0.5, prefix=colorstr('val: '))[0]
 
     # define optimizer
-    optimizer = optim.Adam(deepcod_model.parameters(), lr=0.001)
+    optimizer = optim.Adam(deepcod_model.parameters(), lr=5e-4)
 
     for epoch in range(100):
         pbar = enumerate(dataloader)
@@ -111,22 +113,23 @@ def pretrain_deepcod(hyp, opt, device):
             optimizer.step()
 
             running_loss += loss.item()
-            EVAL_ITER = 5000
+            EVAL_ITER = 20000
             if i % EVAL_ITER == EVAL_ITER - 1:
-                print(f'epoch {epoch}, iteration {i} training loss: {running_loss/EVAL_ITER: .5f}, '
-                      f'time cost {time.time()-start_time: .5f}.')
+                print(f'epoch {epoch}, iteration {i} training loss: {running_loss / EVAL_ITER: .5f}, '
+                      f'time cost {time.time() - start_time: .5f}s.')
                 start_time = time.time()
 
                 running_loss = 0.0
                 torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
 
                 test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
-                print(f'\n epoch {epoch}, test counter {test_counter}, testing loss {test_loss: .3f}s')
+                print(f'\n epoch {epoch}, test counter {test_counter}, testing loss {test_loss: .5f}')
                 test_counter += 1
 
     print('Finished Training')
 
 
+# @profile
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
@@ -181,11 +184,13 @@ def train(hyp, opt, device, tb_writer=None):
         state_dict = ckpt['model'].float().state_dict()  # to FP32
         state_dict = intersect_dicts(state_dict, yolo_model.state_dict(), exclude=exclude)  # intersect
         yolo_model.load_state_dict(state_dict, strict=False)  # load
-        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(yolo_model.state_dict()), weights))  # report
+        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(yolo_model.state_dict()), weights))
     else:
         yolo_model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+
+    # Check and extract data path
     with torch_distributed_zero_first(rank):
-        check_dataset(data_dict)  # check
+        check_dataset(data_dict)
     train_path = data_dict['train']
     test_path = data_dict['val']
 
@@ -292,7 +297,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Training data loader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
-                                            hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
+                                            hyp=hyp, augment=False, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
@@ -318,13 +323,16 @@ def train(hyp, opt, device, tb_writer=None):
             # Anchors
             if not opt.noautoanchor:
                 check_anchors(dataset, model=yolo_model, thr=hyp['anchor_t'], imgsz=imgsz)
-            yolo_model.half().float()  # pre-reduce anchor precision
+
+            # Pre-reduce anchor precision
+            yolo_model.half().float()
 
     # DDP mode
     if cuda and rank != -1:
         yolo_model = DDP(yolo_model, device_ids=[opt.local_rank], output_device=opt.local_rank,
-                    # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                    find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in yolo_model.modules()))
+                         # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
+                         find_unused_parameters=any(
+                             isinstance(layer, nn.MultiheadAttention) for layer in yolo_model.modules()))
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
@@ -340,7 +348,6 @@ def train(hyp, opt, device, tb_writer=None):
     # Start training
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
-    # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
@@ -350,8 +357,11 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
+
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
         yolo_model.train()
+
+        # set deepcod to training mode
         if opt.deepcod_option == 'fine_tune_deepcod':
             deepcod_model.train()
 
@@ -369,29 +379,29 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank != 0:
                     dataset.indices = indices.cpu().numpy()
 
-        # Update mosaic border
-        # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
-        # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
-
         # mloss = torch.zeros(4, device=device)  # mean losses
-        mloss = torch.zeros(1, device=device)
+        mloss = torch.tensor(0., device=device)
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
+
         pbar = enumerate(dataloader)
         logger.info(('\n' + '%10s' * 5) % ('Epoch', 'gpu_mem', 'loss', 'labels', 'img_size'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
+
         optimizer.zero_grad()
 
         # iterate over an epoch
-        for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
-            ni = i + nb * epoch  # number integrated batches (since train start)
-            imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
+        for i, (imgs, targets, paths, _) in pbar:
+            # number integrated batches (since train start)
+            ni = i + nb * epoch
+
+            # uint8 to float32, 0-255 to 0.0-1.0
+            imgs = imgs.to(device, non_blocking=True).float() / 255.0
 
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
-                # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
                 accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
@@ -427,7 +437,7 @@ def train(hyp, opt, device, tb_writer=None):
                             loss += F.mse_loss(reconst_pred[i], pred[i])
                     else:
                         # loss scaled by batch_size
-                        loss, loss_items = compute_loss(reconst_pred, targets.to(device))
+                        loss, _ = compute_loss(reconst_pred, targets.to(device))
 
                     # add reconst loss
                     loss += reconst_loss
@@ -435,8 +445,9 @@ def train(hyp, opt, device, tb_writer=None):
                     pred = yolo_model(imgs)  # forward
                     loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
 
+                # the followings are not used in DeepCOD fine tuning
                 if rank != -1:
-                    loss *= opt.world_size  # gradient averaged between devices in DDP mode
+                    loss *= opt.world_size
                 if opt.quad:
                     loss *= 4.
 
@@ -453,7 +464,8 @@ def train(hyp, opt, device, tb_writer=None):
                 # If gradients don't contain infs/NaNs, optimizer.step() is then called,
                 # otherwise, optimizer.step() is skipped.
                 '''
-                scaler.step(optimizer)  # optimizer.step
+                # optimizer.step
+                scaler.step(optimizer)
 
                 # Updates the scale for next iteration.
                 scaler.update()
@@ -470,12 +482,12 @@ def train(hyp, opt, device, tb_writer=None):
             # Print
             if rank in [-1, 0]:
                 # mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                mloss = (mloss * i + loss) / (i+1)
+                mloss = (mloss * i + loss) / (i + 1)
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
                 # s = ('%8s' * 2 + '%8.4g' * 6) % (
                 #     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-                s = ('%10s' * 2 + '%10.4g' * 3) % (
-                    '%g/%g' % (epoch, epochs - 1), mem, mloss, targets.shape[0], imgs.shape[-1])
+                s = ('%10s' * 2 + '%10.4g' * 3) % ('%g/%g' % (epoch, epochs - 1), mem, loss,
+                                                   targets.shape[0], imgs.shape[-1])
                 pbar.set_description(s)
 
                 # Plot
@@ -616,9 +628,10 @@ if __name__ == '__main__':
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=30)
+    parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
+    parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
 
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -635,7 +648,6 @@ if __name__ == '__main__':
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
     parser.add_argument('--project', default='offloading_runs/', help='save to project/name')
     parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
@@ -715,14 +727,16 @@ if __name__ == '__main__':
     logger.info(opt)
     # training process
     if opt.deepcod_option == 'pretrain_deepcod':
+        # torch.set_num_threads(1)
         pretrain_deepcod(hyp, opt, device)
     elif not opt.evolve:
-        torch.set_num_threads(1)
+        # torch.set_num_threads(1)
         tb_writer = None  # init loggers
         if opt.global_rank in [-1, 0]:
             prefix = colorstr('tensorboard: ')
             logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
             tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
+
         train(hyp, opt, device, tb_writer)
 
     # Evolve hyperparameters (optional)
