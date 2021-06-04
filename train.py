@@ -380,7 +380,6 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank != 0:
                     dataset.indices = indices.cpu().numpy()
 
-        # mloss = torch.zeros(4, device=device)  # mean losses
         mloss = torch.tensor(0., device=device)
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
@@ -397,7 +396,7 @@ def train(hyp, opt, device, tb_writer=None):
             # number integrated batches (since train start)
             ni = i + nb * epoch
 
-            # uint8 to float32, 0-255 to 0.0-1.0
+            # uint8 to float32, 0-255 to 0.0-1.0, shape: [batch, channel, height, width]
             imgs = imgs.to(device, non_blocking=True).float() / 255.0
 
             # Warmup
@@ -421,16 +420,17 @@ def train(hyp, opt, device, tb_writer=None):
             # Forward
             with amp.autocast(enabled=cuda):
                 if opt.deepcod_option == 'fine_tune_deepcod':
-                    # _, _, reconst_imgs = deepcod_model(imgs)
-                    # reconst_loss = opt.reconst_loss_scale * get_loss(deepcod_model, imgs, reconst_imgs)
+                    # reconstruct the image
+                    _, _, reconst_imgs = deepcod_model(imgs)
+
+                    # compute reconstruction loss
+                    reconst_loss = opt.reconst_loss_scale * get_loss(deepcod_model, imgs, reconst_imgs)
 
                     # print(imgs.type(), imgs.shape)
                     # print(reconst_imgs.type(), reconst_imgs.shape)
 
-                    # imgs: [batch, channel, height, width]
                     # shape: [batch, 3, 80, 80, 85], [batch, 3, 40, 40, 85], [batch, 3, 20, 20, 85]
-                    # reconst_pred = yolo_model(reconst_imgs)
-                    reconst_pred = yolo_model(imgs)
+                    reconst_pred = yolo_model(reconst_imgs)
 
                     if opt.deepcod_yolo_loss == 'yolo_mse':
                         pred = yolo_model(imgs)
@@ -441,8 +441,8 @@ def train(hyp, opt, device, tb_writer=None):
                         # loss scaled by batch_size
                         loss, _ = compute_loss(reconst_pred, targets.to(device))
 
-                    # add reconst loss
-                    # loss += reconst_loss
+                    # add reconst loss to loss of YOLO supervision
+                    loss += reconst_loss
                 else:
                     pred = yolo_model(imgs)  # forward
                     loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
@@ -483,12 +483,9 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Print
             if rank in [-1, 0]:
-                # mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                mloss = (mloss * i + loss) / (i + 1)
+                mloss = (mloss * i + loss.detach()) / (i + 1)
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                # s = ('%8s' * 2 + '%8.4g' * 6) % (
-                #     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-                s = ('%10s' * 2 + '%10.4g' * 3) % ('%g/%g' % (epoch, epochs - 1), mem, loss,
+                s = ('%10s' * 2 + '%10.4g' * 3) % ('%g/%g' % (epoch, epochs - 1), mem, mloss,
                                                    targets.shape[0], imgs.shape[-1])
                 pbar.set_description(s)
 
@@ -540,7 +537,7 @@ def train(hyp, opt, device, tb_writer=None):
                     'metrics/precision', 'metrics/recall', 'metrics/mAP_0.5', 'metrics/mAP_0.5:0.95',
                     'val/box_loss', 'val/obj_loss', 'val/cls_loss',  # val loss
                     'x/lr0', 'x/lr1', 'x/lr2']  # params
-            for x, tag in zip(list(mloss[:-1]) + list(results) + lr, tags):
+            for x, tag in zip(list(results) + lr, tags):
                 if tb_writer:
                     tb_writer.add_scalar(tag, x, epoch)  # tensorboard
                 if wandb_logger.wandb:
@@ -629,11 +626,13 @@ if __name__ == '__main__':
     parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
-    parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
+    parser.add_argument('--hyp', type=str, default='data/hyp.finetune.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
+    parser.add_argument('--project', default='offloading_runs/', help='save to project/name')
+    parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -644,13 +643,11 @@ if __name__ == '__main__':
     parser.add_argument('--bucket', type=str, default='', help='gsutil bucket')
     parser.add_argument('--cache-images', action='store_true', help='cache images for faster training')
     parser.add_argument('--image-weights', action='store_true', help='use weighted image selection for training')
-    parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--multi-scale', action='store_true', help='vary img-size +/- 50%%')
     parser.add_argument('--single-cls', action='store_true', help='train multi-class data as single-class')
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--project', default='offloading_runs/', help='save to project/name')
     parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
