@@ -41,8 +41,6 @@ from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
 
-# import torch.autograd.profiler as profiler
-
 logger = logging.getLogger(__name__)
 
 
@@ -129,7 +127,6 @@ def pretrain_deepcod(hyp, opt, device):
     print('Finished Training')
 
 
-# @profile
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
@@ -140,8 +137,6 @@ def train(hyp, opt, device, tb_writer=None):
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
     last = wdir / 'last.pt'
     best = wdir / 'best.pt'
-    last_deepcod_weights_path = wdir / 'last_deepcod.pt'
-    best_deepcod_weights_path = wdir / 'best_deepcod.pt'
     results_file = save_dir / 'results.txt'
 
     # Save run settings
@@ -174,39 +169,27 @@ def train(hyp, opt, device, tb_writer=None):
     assert len(names) == nc, '%g names found for nc=%g dataset in %s' % (len(names), nc, opt.data)  # check
 
     # Model
-    pretrained = weights.endswith('.pt')  # pretrained is true if a .pt file is provided
+    pretrained = weights.endswith('.pt')
     if pretrained:
         with torch_distributed_zero_first(rank):
             attempt_download(weights)  # download if not found locally
         ckpt = torch.load(weights, map_location=device)  # load checkpoint
-        yolo_model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
+        model = Model(opt.cfg or ckpt['model'].yaml, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
         exclude = ['anchor'] if (opt.cfg or hyp.get('anchors')) and not opt.resume else []  # exclude keys
         state_dict = ckpt['model'].float().state_dict()  # to FP32
-        state_dict = intersect_dicts(state_dict, yolo_model.state_dict(), exclude=exclude)  # intersect
-        yolo_model.load_state_dict(state_dict, strict=False)  # load
-        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(yolo_model.state_dict()), weights))
+        state_dict = intersect_dicts(state_dict, model.state_dict(), exclude=exclude)  # intersect
+        model.load_state_dict(state_dict, strict=False)  # load
+        logger.info('Transferred %g/%g items from %s' % (len(state_dict), len(model.state_dict()), weights))  # report
     else:
-        yolo_model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
-
-    # Check and extract data path
+        model = Model(opt.cfg, ch=3, nc=nc, anchors=hyp.get('anchors')).to(device)  # create
     with torch_distributed_zero_first(rank):
-        check_dataset(data_dict)
+        check_dataset(data_dict)  # check
     train_path = data_dict['train']
     test_path = data_dict['val']
 
-    # define and load the DeepCOD model
-    if opt.deepcod_option == 'fine_tune_deepcod':
-        deepcod_model = DeepCOD().to(device)
-        if opt.deepcod_weights.endswith('.pt'):
-            deepcod_model.load_state_dict(torch.load(opt.deepcod_weights))
-
-    # Freeze. freeze the parameters for YOLO when we fine-tune the deepcod model
-    if opt.deepcod_option == 'fine_tune_deepcod':
-        freeze = ['model.%s.' % x for x in range(25)]  # parameter names to freeze (full or partial)
-    else:
-        freeze = []  # parameter names to freeze (full or partial)
-
-    for k, v in yolo_model.named_parameters():
+    # Freeze
+    freeze = []  # parameter names to freeze (full or partial)
+    for k, v in model.named_parameters():
         v.requires_grad = True  # train all layers
         if any(x in k for x in freeze):
             print('freezing %s' % k)
@@ -219,7 +202,7 @@ def train(hyp, opt, device, tb_writer=None):
     logger.info(f"Scaled weight_decay = {hyp['weight_decay']}")
 
     pg0, pg1, pg2 = [], [], []  # optimizer parameter groups
-    for k, v in yolo_model.named_modules():
+    for k, v in model.named_modules():
         if hasattr(v, 'bias') and isinstance(v.bias, nn.Parameter):
             pg2.append(v.bias)  # biases
         if isinstance(v, nn.BatchNorm2d):
@@ -237,12 +220,6 @@ def train(hyp, opt, device, tb_writer=None):
     logger.info('Optimizer groups: %g .bias, %g conv.weight, %g other' % (len(pg2), len(pg1), len(pg0)))
     del pg0, pg1, pg2
 
-    # add deepcod parameters
-    if opt.deepcod_option == 'fine_tune_deepcod':
-        pg3 = deepcod_model.parameters()
-        optimizer.add_param_group({'params': pg3})
-        del pg3
-
     # Scheduler https://arxiv.org/pdf/1812.01187.pdf
     # https://pytorch.org/docs/stable/_modules/torch/optim/lr_scheduler.html#OneCycleLR
     if opt.linear_lr:
@@ -250,9 +227,10 @@ def train(hyp, opt, device, tb_writer=None):
     else:
         lf = one_cycle(1, hyp['lrf'], epochs)  # cosine 1->hyp['lrf']
     scheduler = lr_scheduler.LambdaLR(optimizer, lr_lambda=lf)
+    # plot_lr_scheduler(optimizer, scheduler, epochs)
 
     # EMA
-    ema = ModelEMA(yolo_model) if rank in [-1, 0] else None
+    ema = ModelEMA(model) if rank in [-1, 0] else None
 
     # Resume
     start_epoch, best_fitness = 0, 0.0
@@ -283,22 +261,22 @@ def train(hyp, opt, device, tb_writer=None):
         del ckpt, state_dict
 
     # Image sizes
-    gs = max(int(yolo_model.stride.max()), 32)  # grid size (max stride)
-    nl = yolo_model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
+    gs = max(int(model.stride.max()), 32)  # grid size (max stride)
+    nl = model.model[-1].nl  # number of detection layers (used for scaling hyp['obj'])
     imgsz, imgsz_test = [check_img_size(x, gs) for x in opt.img_size]  # verify imgsz are gs-multiples
 
     # DP mode
     if cuda and rank == -1 and torch.cuda.device_count() > 1:
-        yolo_model = torch.nn.DataParallel(yolo_model)
+        model = torch.nn.DataParallel(model)
 
     # SyncBatchNorm
     if opt.sync_bn and cuda and rank != -1:
-        yolo_model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(yolo_model).to(device)
+        model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(model).to(device)
         logger.info('Using SyncBatchNorm()')
 
-    # Training data loader
+    # Trainloader
     dataloader, dataset = create_dataloader(train_path, imgsz, batch_size, gs, opt,
-                                            hyp=hyp, augment=False, cache=opt.cache_images, rect=opt.rect, rank=rank,
+                                            hyp=hyp, augment=True, cache=opt.cache_images, rect=opt.rect, rank=rank,
                                             world_size=opt.world_size, workers=opt.workers,
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     mlc = np.concatenate(dataset.labels, 0)[:, 0].max()  # max label class
@@ -307,15 +285,16 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Process 0
     if rank in [-1, 0]:
-        testloader = create_dataloader(test_path, imgsz_test, batch_size, gs, opt,  # testloader
-                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=False, rank=-1,
+        testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, gs, opt,  # testloader
+                                       hyp=hyp, cache=opt.cache_images and not opt.notest, rect=True, rank=-1,
                                        world_size=opt.world_size, workers=opt.workers,
                                        pad=0.5, prefix=colorstr('val: '))[0]
 
         if not opt.resume:
             labels = np.concatenate(dataset.labels, 0)
             c = torch.tensor(labels[:, 0])  # classes
-
+            # cf = torch.bincount(c.long(), minlength=nc) + 1.  # frequency
+            # model._initialize_biases(cf.to(device))
             if plots:
                 plot_labels(labels, names, save_dir, loggers)
                 if tb_writer:
@@ -323,54 +302,47 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Anchors
             if not opt.noautoanchor:
-                check_anchors(dataset, model=yolo_model, thr=hyp['anchor_t'], imgsz=imgsz)
-
-            # Pre-reduce anchor precision
-            yolo_model.half().float()
+                check_anchors(dataset, model=model, thr=hyp['anchor_t'], imgsz=imgsz)
+            model.half().float()  # pre-reduce anchor precision
 
     # DDP mode
     if cuda and rank != -1:
-        yolo_model = DDP(yolo_model, device_ids=[opt.local_rank], output_device=opt.local_rank,
-                         # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
-                         find_unused_parameters=any(
-                             isinstance(layer, nn.MultiheadAttention) for layer in yolo_model.modules()))
+        model = DDP(model, device_ids=[opt.local_rank], output_device=opt.local_rank,
+                    # nn.MultiheadAttention incompatibility with DDP https://github.com/pytorch/pytorch/issues/26698
+                    find_unused_parameters=any(isinstance(layer, nn.MultiheadAttention) for layer in model.modules()))
 
     # Model parameters
     hyp['box'] *= 3. / nl  # scale to layers
     hyp['cls'] *= nc / 80. * 3. / nl  # scale to classes and layers
     hyp['obj'] *= (imgsz / 640) ** 2 * 3. / nl  # scale to image size and layers
     hyp['label_smoothing'] = opt.label_smoothing
-    yolo_model.nc = nc  # attach number of classes to model
-    yolo_model.hyp = hyp  # attach hyperparameters to model
-    yolo_model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
-    yolo_model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
-    yolo_model.names = names
+    model.nc = nc  # attach number of classes to model
+    model.hyp = hyp  # attach hyperparameters to model
+    model.gr = 1.0  # iou loss ratio (obj_loss = 1.0 or iou)
+    model.class_weights = labels_to_class_weights(dataset.labels, nc).to(device) * nc  # attach class weights
+    model.names = names
 
     # Start training
     t0 = time.time()
     nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    # nw = min(nw, (epochs - start_epoch) / 2 * nb)  # limit warmup to < 1/2 of training
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
     scaler = amp.GradScaler(enabled=cuda)
-    compute_loss = ComputeLoss(yolo_model)  # init loss class
+    compute_loss = ComputeLoss(model)  # init loss class
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
                 f'Logging results to {save_dir}\n'
                 f'Starting training for {epochs} epochs...')
-
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
-        yolo_model.train()
-
-        # set deepcod to training mode
-        if opt.deepcod_option == 'fine_tune_deepcod':
-            deepcod_model.train()
+        model.train()
 
         # Update image weights (optional)
         if opt.image_weights:
             # Generate indices
             if rank in [-1, 0]:
-                cw = yolo_model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
+                cw = model.class_weights.cpu().numpy() * (1 - maps) ** 2 / nc  # class weights
                 iw = labels_to_image_weights(dataset.labels, nc=nc, class_weights=cw)  # image weights
                 dataset.indices = random.choices(range(dataset.n), weights=iw, k=dataset.n)  # rand weighted idx
             # Broadcast if DDP
@@ -380,29 +352,26 @@ def train(hyp, opt, device, tb_writer=None):
                 if rank != 0:
                     dataset.indices = indices.cpu().numpy()
 
-        # mloss = torch.zeros(4, device=device)  # mean losses
-        mloss = torch.tensor(0., device=device)
+        # Update mosaic border
+        # b = int(random.uniform(0.25 * imgsz, 0.75 * imgsz + gs) // gs * gs)
+        # dataset.mosaic_border = [b - imgsz, -b]  # height, width borders
+
+        mloss = torch.zeros(4, device=device)  # mean losses
         if rank != -1:
             dataloader.sampler.set_epoch(epoch)
-
         pbar = enumerate(dataloader)
-        logger.info(('\n' + '%10s' * 5) % ('Epoch', 'gpu_mem', 'loss', 'labels', 'img_size'))
+        logger.info(('\n' + '%10s' * 8) % ('Epoch', 'gpu_mem', 'box', 'obj', 'cls', 'total', 'labels', 'img_size'))
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
-
         optimizer.zero_grad()
-
-        # iterate over an epoch
-        for i, (imgs, targets, paths, _) in pbar:
-            # number integrated batches (since train start)
-            ni = i + nb * epoch
-
-            # uint8 to float32, 0-255 to 0.0-1.0
-            imgs = imgs.to(device, non_blocking=True).float() / 255.0
+        for i, (imgs, targets, paths, _) in pbar:  # batch -------------------------------------------------------------
+            ni = i + nb * epoch  # number integrated batches (since train start)
+            imgs = imgs.to(device, non_blocking=True).float() / 255.0  # uint8 to float32, 0-255 to 0.0-1.0
 
             # Warmup
             if ni <= nw:
                 xi = [0, nw]  # x interp
+                # model.gr = np.interp(ni, xi, [0.0, 1.0])  # iou loss ratio (obj_loss = 1.0 or iou)
                 accumulate = max(1, np.interp(ni, xi, [1, nbs / total_batch_size]).round())
                 for j, x in enumerate(optimizer.param_groups):
                     # bias lr falls from 0.1 to lr0, all other lrs rise from 0.0 to lr0
@@ -420,82 +389,39 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Forward
             with amp.autocast(enabled=cuda):
-                if opt.deepcod_option == 'fine_tune_deepcod':
-                    # _, _, reconst_imgs = deepcod_model(imgs)
-                    # reconst_loss = opt.reconst_loss_scale * get_loss(deepcod_model, imgs, reconst_imgs)
-
-                    # print(imgs.type(), imgs.shape)
-                    # print(reconst_imgs.type(), reconst_imgs.shape)
-
-                    # imgs: [batch, channel, height, width]
-                    # shape: [batch, 3, 80, 80, 85], [batch, 3, 40, 40, 85], [batch, 3, 20, 20, 85]
-                    # reconst_pred = yolo_model(reconst_imgs)
-                    reconst_pred = yolo_model(imgs)
-
-                    if opt.deepcod_yolo_loss == 'yolo_mse':
-                        pred = yolo_model(imgs)
-                        loss = F.mse_loss(reconst_pred[0], pred[0])
-                        for i in range(1, len(reconst_pred)):
-                            loss += F.mse_loss(reconst_pred[i], pred[i])
-                    else:
-                        # loss scaled by batch_size
-                        loss, _ = compute_loss(reconst_pred, targets.to(device))
-
-                    # add reconst loss
-                    # loss += reconst_loss
-                else:
-                    pred = yolo_model(imgs)  # forward
-                    loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
-
-                # the followings are not used in DeepCOD fine tuning
+                pred = model(imgs)  # forward
+                loss, loss_items = compute_loss(pred, targets.to(device))  # loss scaled by batch_size
                 if rank != -1:
-                    loss *= opt.world_size
+                    loss *= opt.world_size  # gradient averaged between devices in DDP mode
                 if opt.quad:
                     loss *= 4.
 
             # Backward
-            '''
-            Scales loss. Calls backward() on scaled loss to create scaled gradients.
-            '''
             scaler.scale(loss).backward()
 
             # Optimize
             if ni % accumulate == 0:
-                '''
-                # scaler.step() first unscales gradients of the optimizer's params.
-                # If gradients don't contain infs/NaNs, optimizer.step() is then called,
-                # otherwise, optimizer.step() is skipped.
-                '''
-                # optimizer.step
-                scaler.step(optimizer)
-
-                # Updates the scale for next iteration.
+                scaler.step(optimizer)  # optimizer.step
                 scaler.update()
-
-                # Since the backward() function accumulates gradients,
-                # and you don’t want to mix up gradients between minibatches, you have to zero them out
-                # at the start of a new minibatch.
                 optimizer.zero_grad()
-
-                # exponential moving average
                 if ema:
-                    ema.update(yolo_model)
+                    ema.update(model)
 
             # Print
             if rank in [-1, 0]:
-                # mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
-                mloss = (mloss * i + loss) / (i + 1)
+                mloss = (mloss * i + loss_items) / (i + 1)  # update mean losses
                 mem = '%.3gG' % (torch.cuda.memory_reserved() / 1E9 if torch.cuda.is_available() else 0)  # (GB)
-                # s = ('%8s' * 2 + '%8.4g' * 6) % (
-                #     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
-                s = ('%10s' * 2 + '%10.4g' * 3) % ('%g/%g' % (epoch, epochs - 1), mem, loss,
-                                                   targets.shape[0], imgs.shape[-1])
+                s = ('%10s' * 2 + '%10.4g' * 6) % (
+                    '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(s)
 
                 # Plot
                 if plots and ni < 3:
                     f = save_dir / f'train_batch{ni}.jpg'  # filename
                     Thread(target=plot_images, args=(imgs, targets, paths, f), daemon=True).start()
+                    # if tb_writer:
+                    #     tb_writer.add_image(f, result, dataformats='HWC', global_step=epoch)
+                    #     tb_writer.add_graph(torch.jit.trace(model, imgs, strict=False), [])  # add model graph
                 elif plots and ni == 10 and wandb_logger.wandb:
                     wandb_logger.log({"Mosaics": [wandb_logger.wandb.Image(str(x), caption=x.name) for x in
                                                   save_dir.glob('train*.jpg') if x.exists()]})
@@ -507,17 +433,17 @@ def train(hyp, opt, device, tb_writer=None):
         lr = [x['lr'] for x in optimizer.param_groups]  # for tensorboard
         scheduler.step()
 
-        # DDP process 0 or single-GPU, testing the training progress
+        # DDP process 0 or single-GPU
         if rank in [-1, 0]:
             # mAP
-            ema.update_attr(yolo_model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
+            ema.update_attr(model, include=['yaml', 'nc', 'hyp', 'gr', 'names', 'stride', 'class_weights'])
             final_epoch = epoch + 1 == epochs
             if not opt.notest or final_epoch:  # Calculate mAP
                 wandb_logger.current_epoch = epoch + 1
                 results, maps, times = test.test(data_dict,
                                                  batch_size=batch_size * 2,
                                                  imgsz=imgsz_test,
-                                                 yolo_model=ema.ema,
+                                                 model=ema.ema,
                                                  single_cls=opt.single_cls,
                                                  dataloader=testloader,
                                                  save_dir=save_dir,
@@ -525,9 +451,7 @@ def train(hyp, opt, device, tb_writer=None):
                                                  plots=plots and final_epoch,
                                                  wandb_logger=wandb_logger,
                                                  compute_loss=compute_loss,
-                                                 is_coco=is_coco,
-                                                 train_deepcod_option=opt.deepcod_option,
-                                                 train_deepcod_model=deepcod_model)
+                                                 is_coco=is_coco)
 
             # Write
             with open(results_file, 'a') as f:
@@ -554,30 +478,24 @@ def train(hyp, opt, device, tb_writer=None):
 
             # Save model
             if (not opt.nosave) or (final_epoch and not opt.evolve):  # if save
-                if opt.deepcod_option == 'fine_tune_deepcod':
-                    torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
+                ckpt = {'epoch': epoch,
+                        'best_fitness': best_fitness,
+                        'training_results': results_file.read_text(),
+                        'model': deepcopy(model.module if is_parallel(model) else model).half(),
+                        'ema': deepcopy(ema.ema).half(),
+                        'updates': ema.updates,
+                        'optimizer': optimizer.state_dict(),
+                        'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
 
-                    if best_fitness == fi:
-                        torch.save(deepcod_model.state_dict(), best_deepcod_weights_path)
-                else:
-                    ckpt = {'epoch': epoch,
-                            'best_fitness': best_fitness,
-                            'training_results': results_file.read_text(),
-                            'model': deepcopy(yolo_model.module if is_parallel(yolo_model) else yolo_model).half(),
-                            'ema': deepcopy(ema.ema).half(),
-                            'updates': ema.updates,
-                            'optimizer': optimizer.state_dict(),
-                            'wandb_id': wandb_logger.wandb_run.id if wandb_logger.wandb else None}
-
-                    # Save last, best and delete
-                    torch.save(ckpt, last)
-                    if best_fitness == fi:
-                        torch.save(ckpt, best)
-                    if wandb_logger.wandb:
-                        if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
-                            wandb_logger.log_model(
-                                last.parent, opt, epoch, fi, best_model=best_fitness == fi)
-                    del ckpt
+                # Save last, best and delete
+                torch.save(ckpt, last)
+                if best_fitness == fi:
+                    torch.save(ckpt, best)
+                if wandb_logger.wandb:
+                    if ((epoch + 1) % opt.save_period == 0 and not final_epoch) and opt.save_period != -1:
+                        wandb_logger.log_model(
+                            last.parent, opt, epoch, fi, best_model=best_fitness == fi)
+                del ckpt
 
         # end epoch ----------------------------------------------------------------------------------------------------
     # end training
@@ -598,7 +516,7 @@ def train(hyp, opt, device, tb_writer=None):
                                           imgsz=imgsz_test,
                                           conf_thres=0.001,
                                           iou_thres=0.7,
-                                          yolo_model=attempt_load(m, device).half(),
+                                          model=attempt_load(m, device).half(),
                                           single_cls=opt.single_cls,
                                           dataloader=testloader,
                                           save_dir=save_dir,
@@ -626,14 +544,13 @@ def train(hyp, opt, device, tb_writer=None):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
-    parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
+    parser.add_argument('--weights', type=str, default='yolov5s.pt', help='initial weights path')
+    parser.add_argument('--cfg', type=str, default='', help='model.yaml path')
     parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.scratch.yaml', help='hyperparameters path')
-    parser.add_argument('--epochs', type=int, default=100)
+    parser.add_argument('--epochs', type=int, default=300)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
-    parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
 
     parser.add_argument('--rect', action='store_true', help='rectangular training')
     parser.add_argument('--resume', nargs='?', const=True, default=False, help='resume most recent training')
@@ -650,7 +567,8 @@ if __name__ == '__main__':
     parser.add_argument('--adam', action='store_true', help='use torch.optim.Adam() optimizer')
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
-    parser.add_argument('--project', default='offloading_runs/', help='save to project/name')
+    parser.add_argument('--workers', type=int, default=8, help='maximum number of dataloader workers')
+    parser.add_argument('--project', default='runs/train', help='save to project/name')
     parser.add_argument('--entity', default=None, help='W&B entity')
     parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
@@ -661,6 +579,7 @@ if __name__ == '__main__':
     parser.add_argument('--bbox_interval', type=int, default=-1, help='Set bounding-box image logging interval for W&B')
     parser.add_argument('--save_period', type=int, default=-1, help='Log model after every "save_period" epoch')
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
+    opt = parser.parse_args()
 
     # for offloading
     parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
@@ -727,18 +646,12 @@ if __name__ == '__main__':
 
     # Train
     logger.info(opt)
-    # training process
-    if opt.deepcod_option == 'pretrain_deepcod':
-        # torch.set_num_threads(1)
-        pretrain_deepcod(hyp, opt, device)
-    elif not opt.evolve:
-        # torch.set_num_threads(1)
+    if not opt.evolve:
         tb_writer = None  # init loggers
         if opt.global_rank in [-1, 0]:
             prefix = colorstr('tensorboard: ')
             logger.info(f"{prefix}Start with 'tensorboard --logdir {opt.project}', view at http://localhost:6006/")
             tb_writer = SummaryWriter(opt.save_dir)  # Tensorboard
-
         train(hyp, opt, device, tb_writer)
 
     # Evolve hyperparameters (optional)
