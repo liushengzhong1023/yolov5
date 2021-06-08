@@ -72,7 +72,7 @@ def create_dataloader(path, imgsz, batch_size, stride, opt, hyp=None, augment=Fa
                                       prefix=prefix)
 
     batch_size = min(batch_size, len(dataset))
-    nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 0, workers])  # number of workers
+    nw = min([os.cpu_count() // world_size, batch_size if batch_size > 1 else 1, workers])  # number of workers
     sampler = torch.utils.data.distributed.DistributedSampler(dataset) if rank != -1 else None
     loader = torch.utils.data.DataLoader if image_weights else InfiniteDataLoader
     # Use torch.utils.data.DataLoader() if dataset.properties will update during training else InfiniteDataLoader()
@@ -533,16 +533,17 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
                 labels = np.concatenate((labels, labels2), 0)
 
         else:
-            # Load image
+            # Load image, resize the image to make sure longer side = target size
             img, (h0, w0), (h, w) = load_image(self, index)
 
-            # Letterbox
+            # Letterbox, pad the shorter side = target size
             shape = self.batch_shapes[self.batch[index]] if self.rect else self.img_size  # final letterboxed shape
             img, ratio, pad = letterbox(img, shape, auto=False, scaleup=self.augment)
             shapes = (h0, w0), ((h / h0, w / w0), pad)  # for COCO mAP rescaling
 
+            # Normalized xywh to pixel xyxy format, process the labels to fit into the new img shape
             labels = self.labels[index].copy()
-            if labels.size:  # normalized xywh to pixel xyxy format
+            if labels.size:
                 labels[:, 1:] = xywhn2xyxy(labels[:, 1:], ratio[0] * w, ratio[1] * h, padw=pad[0], padh=pad[1])
 
         if self.augment:
@@ -562,6 +563,7 @@ class LoadImagesAndLabels(Dataset):  # for training/testing
             # if random.random() < 0.9:
             #     labels = cutout(img, labels)
 
+        # Normalize the labels to [0, 1]
         nL = len(labels)  # number of labels
         if nL:
             labels[:, 1:5] = xyxy2xywh(labels[:, 1:5])  # convert xyxy to xywh

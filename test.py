@@ -24,6 +24,8 @@ from utils.metrics import ap_per_class, ConfusionMatrix
 from utils.plots import plot_images, output_to_target, plot_study_txt
 from utils.torch_utils import select_device, time_synchronized
 
+from torchvision.utils import save_image
+
 
 def test(data,
          weights=None,
@@ -71,7 +73,7 @@ def test(data,
         imgsz = check_img_size(imgsz, s=gs)  # check img_size
 
         # define and load the DeepCOD model
-        if opt.deepcod_option == 'test_with_deepcod':
+        if opt.deepcod_option == 'test_fine_tune_deepcod':
             deepcod_model = DeepCOD().to(device)
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
@@ -107,7 +109,7 @@ def test(data,
             yolo_model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(yolo_model.parameters())))  # run once
         task = opt.task if opt.task in ('train', 'val', 'test') else 'val'  # path to train/val/test images
         dataloader = create_dataloader(data[task], imgsz, batch_size, gs, opt, pad=0.5, rect=False,
-                                       prefix=colorstr(f'{task}: '))[0]
+                                       prefix=colorstr(f'{task}: '), workers=1)[0]
 
     seen = 0
     confusion_matrix = ConfusionMatrix(nc=nc)
@@ -127,7 +129,7 @@ def test(data,
         with torch.no_grad():
             with amp.autocast(enabled=True):
                 # reconstruct first if needed
-                if (opt is not None and opt.deepcod_option == 'test_with_deepcod') or \
+                if (opt is not None and opt.deepcod_option == 'test_fine_tune_deepcod') or \
                         (training and train_deepcod_option == 'fine_tune_deepcod'):
                     _, _, reconst_img = deepcod_model(img)
                     # Run model
@@ -315,7 +317,7 @@ def test(data,
     return (mp, mr, map50, map, *(loss.cpu() / len(dataloader)).tolist()), maps, t
 
 
-def test_pretrain_deepcod(deepcod_model, device, dataloader):
+def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
     '''
     The test function for pretraining the DeepCOD model. Only used in DeepCOD pre-training.
     :param data:
@@ -324,10 +326,21 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader):
     :param imgsz:
     :return:
     '''
-    # # Half
-    # half = device.type != 'cpu'  # half precision only supported on CUDA
-    # if half:
-    #     deepcod_model.half()
+    # load the model
+    if opt is not None:
+        device = select_device(opt.device)
+        deepcod_model = DeepCOD().to(device)
+        if opt.deepcod_weights.endswith('.pt'):
+            deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
+
+        imgsz = check_img_size(opt.img_size, s=32)  # check img_size
+        data = opt.data
+        if isinstance(data, str):
+            with open(data) as f:
+                data = yaml.safe_load(f)
+        check_dataset(data)  # check
+        dataloader = create_dataloader(data[opt.task], imgsz, opt.batch_size, 32, opt, pad=0.5, rect=False,
+                                       prefix=colorstr(f'{opt.task}: '), workers=4)[0]
 
     # test loss
     loss_sum = 0
@@ -343,8 +356,11 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader):
                 iter_counter += 1
                 loss_sum += F.mse_loss(reconst_img, img)
 
-    # convert to float
-    # deepcod_model.float()
+                # save the reconstructed images
+                if opt is not None:
+                    for i, path in enumerate(paths):
+                        output_path = os.path.join(opt.deepcod_reconst_path, os.path.basename(path))
+                        save_image(reconst_img[i], output_path)
 
     return loss_sum / (iter_counter + 1e-6)
 
@@ -358,7 +374,8 @@ if __name__ == '__main__':
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
     parser.add_argument('--verbose', action='store_true', help='report mAP by class')
@@ -371,11 +388,14 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
 
     # for offloading
-    parser.add_argument('-deepcod_weights', type=str, default='/home/tianshi/compressive_offloading_yolov5/src'
-                                                              '/offloading_pytorch/pytorch_endecoder/models/coco_tanh_'
-                                                              'no_regularizer.pt',
+    parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
+                                                              'offloading_pytorch/yolov5/offloading_runs/'
+                                                              'pretrain-deepcod/exp/weights/last_deepcod.pt',
                         help='initial weights path for enc-decoder')
-    parser.add_argument('-deepcod_option', type=str, default='test_with_deepcod',
+    parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
+                                                                   'val_reconstructed_pretrained/',
+                        help='The path to save the reconstructed images.')
+    parser.add_argument('-deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
     opt = parser.parse_args()
 
@@ -386,21 +406,24 @@ if __name__ == '__main__':
     # check_requirements()
 
     if opt.task in ('train', 'val', 'test'):  # run normally
-        test(opt.data,
-             opt.weights,
-             opt.batch_size,
-             opt.img_size,
-             opt.conf_thres,
-             opt.iou_thres,
-             opt.save_json,
-             opt.single_cls,
-             opt.augment,
-             opt.verbose,
-             save_txt=opt.save_txt | opt.save_hybrid,
-             save_hybrid=opt.save_hybrid,
-             save_conf=opt.save_conf,
-             opt=opt
-             )
+        if opt.deepcod_option == 'test_pretrain_deepcod':
+            test_pretrain_deepcod(None, None, None, opt)
+        else:
+            test(opt.data,
+                 opt.weights,
+                 opt.batch_size,
+                 opt.img_size,
+                 opt.conf_thres,
+                 opt.iou_thres,
+                 opt.save_json,
+                 opt.single_cls,
+                 opt.augment,
+                 opt.verbose,
+                 save_txt=opt.save_txt | opt.save_hybrid,
+                 save_hybrid=opt.save_hybrid,
+                 save_conf=opt.save_conf,
+                 opt=opt
+                 )
 
     elif opt.task == 'speed':  # speed benchmarks
         for w in opt.weights:
