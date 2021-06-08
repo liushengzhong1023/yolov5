@@ -29,6 +29,7 @@ def detect(opt):
     set_logging()
     device = select_device(opt.device)
     half = device.type != 'cpu'  # half precision only supported on CUDA
+    print("half = ", half)
 
     # Load model
     model = attempt_load(weights, map_location=device)  # load FP32 model
@@ -56,6 +57,7 @@ def detect(opt):
     names = model.module.names if hasattr(model, 'module') else model.names
     colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
 
+    print("device.type = ", device.type)
     # Run inference
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
@@ -152,9 +154,12 @@ def detect(opt):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5l.pt', help='model.pt path(s)')
-    parser.add_argument('--source', type=str, default='/home/sl29/data/COCO/images/val_reconstructed_640',
+    parser.add_argument('--weights', nargs='+', type=str, default='./weights/yolov5s.pt', help='model.pt path(s)')
+    # parser.add_argument('--source', type=str, default='/home/sl29/data/COCO/images/val_reconstructed_640',
+    #                     help='source')  # file/folder, 0 for webcam
+    parser.add_argument('--source', type=str, default='./data/images/bus.jpg',
                         help='source')  # file/folder, 0 for webcam
+
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
 
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
