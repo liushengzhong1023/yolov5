@@ -25,41 +25,26 @@ def get_boxes(im0s, model, imgsz, stride, device):
     # Initialize
     half = device.type != 'cpu'  # half precision only supported on CUDA
     img = im0s
-    img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416 
-    img = np.ascontiguousarray(img)
 
-    # Get names and colors
-    names = model.module.names if hasattr(model, 'module') else model.names
-    colors = [[random.randint(0, 255) for _ in range(3)] for _ in names]
-
-    # Run inference
-    if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
-
-    t0 = time.time()
-
-    img = torch.from_numpy(img).to(device)
     img = img.half() if half else img.float()  # uint8 to fp16/32
-    if img.ndimension() == 3:
-        img = img.unsqueeze(0)
 
     # Inference
-    t1 = time_synchronized()
+    t1 = time.time()
     pred = model(img)[0]
 
     # Apply NMS
-    pred = non_max_suppression(pred, 0.25, 0.45)
-    t2 = time_synchronized()
+    pred = non_max_suppression(pred, 0.50, 0.55)
+    t2 = time.time()
+    # print(f"yolo time cost = {t2-t1}")
 
     boxes = []
     scores = []
     labels = []
 
     det = pred[0]
-
     if len(det):
         # Rescale boxes from img_size to im0 size
-        det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0s.shape).round()
+        det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img.shape[2:]).round()
         # Record results
         for *xyxy, score, cls in reversed(det):
             boxes.append([x.item() for x in xyxy])
