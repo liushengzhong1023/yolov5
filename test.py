@@ -7,6 +7,7 @@ import torch.nn.functional as F
 
 import numpy as np
 import torch
+import time
 import yaml
 from tqdm import tqdm
 from torch.cuda import amp
@@ -352,7 +353,11 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
 
         with torch.no_grad():
             with amp.autocast(enabled=True):
+                # t1 = time.time()
                 _, _, reconst_img = deepcod_model(img)
+                # t2 = time.time()
+                # print(f'DeepCOD reconstructing time: {t2-t1}s')
+
                 iter_counter += 1
                 loss_sum += F.mse_loss(reconst_img, img)
 
@@ -390,12 +395,12 @@ if __name__ == '__main__':
     # for offloading
     parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp/weights/last_deepcod.pt',
+                                                              'pretrain-deepcod/exp3/weights/last_deepcod.pt',
                         help='initial weights path for enc-decoder')
     parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',
                         help='The path to save the reconstructed images.')
-    parser.add_argument('-deepcod_option', type=str, default='test_fine_tune_deepcod',
+    parser.add_argument('-deepcod_option', type=str, default='test_pretrain_deepcod',
                         help='Option of dealing with deepcod model')
     opt = parser.parse_args()
 

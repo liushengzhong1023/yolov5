@@ -61,6 +61,8 @@ def pretrain_deepcod(hyp, opt, device):
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
     last_deepcod_weights_path = wdir / 'last_deepcod.pt'
+    best_deepcod_weights_path = wdir / 'best_deepcod.pt'
+    min_test_loss = np.inf
 
     # define the deepcod model
     deepcod_model = DeepCOD().to(device)
@@ -95,7 +97,7 @@ def pretrain_deepcod(hyp, opt, device):
 
     for epoch in range(100):
         pbar = enumerate(dataloader)
-        test_counter = 0
+        # test_counter = 0
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
 
@@ -111,20 +113,19 @@ def pretrain_deepcod(hyp, opt, device):
 
             loss.backward()
             optimizer.step()
-
             running_loss += loss.item()
-            EVAL_ITER = 20000
-            if i % EVAL_ITER == EVAL_ITER - 1:
-                print(f'epoch {epoch}, iteration {i} training loss: {running_loss / EVAL_ITER: .5f}, '
-                      f'time cost {time.time() - start_time: .5f}s.')
-                start_time = time.time()
 
-                running_loss = 0.0
-                torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
+        # test after an epoch
+        print(f'epoch {epoch}, training loss: {running_loss / nb: .5f}, '
+              f'time cost {time.time() - start_time: .5f}s.')
+        torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
+        test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
+        print(f'\n epoch {epoch}, testing loss {test_loss: .5f}')
 
-                test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
-                print(f'\n epoch {epoch}, test counter {test_counter}, testing loss {test_loss: .5f}')
-                test_counter += 1
+        # save best model
+        if test_loss < min_test_loss:
+            min_test_loss = test_loss
+            torch.save(deepcod_model.state_dict(), best_deepcod_weights_path)
 
     print('Finished Training')
 
