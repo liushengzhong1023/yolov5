@@ -395,7 +395,7 @@ if __name__ == '__main__':
     # for offloading
     parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp3/weights/last_deepcod.pt',
+                                                              'pretrain-deepcod/exp/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
     parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',

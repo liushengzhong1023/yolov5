@@ -96,6 +96,7 @@ def pretrain_deepcod(hyp, opt, device):
     optimizer = optim.Adam(deepcod_model.parameters(), lr=5e-4)
 
     for epoch in range(100):
+        print(f'Starting epoch {epoch}')
         pbar = enumerate(dataloader)
         # test_counter = 0
         if rank in [-1, 0]:
@@ -120,7 +121,7 @@ def pretrain_deepcod(hyp, opt, device):
               f'time cost {time.time() - start_time: .5f}s.')
         torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
         test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
-        print(f'\n epoch {epoch}, testing loss {test_loss: .5f}')
+        print(f'epoch {epoch}, testing loss {test_loss: .5f} \n')
 
         # save best model
         if test_loss < min_test_loss:
