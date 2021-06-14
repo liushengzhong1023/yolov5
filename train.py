@@ -60,7 +60,6 @@ def pretrain_deepcod(hyp, opt, device):
     # Directories
     wdir = save_dir / 'weights'
     wdir.mkdir(parents=True, exist_ok=True)  # make dir
-    last_deepcod_weights_path = wdir / 'last_deepcod.pt'
     best_deepcod_weights_path = wdir / 'best_deepcod.pt'
     min_test_loss = np.inf
 
@@ -73,7 +72,6 @@ def pretrain_deepcod(hyp, opt, device):
     # define the dataloaders
     with open(opt.data) as f:
         data_dict = yaml.safe_load(f)  # data dict
-    is_coco = opt.data.endswith('coco.yaml')
 
     with torch_distributed_zero_first(rank):
         check_dataset(data_dict)  # check
@@ -96,9 +94,11 @@ def pretrain_deepcod(hyp, opt, device):
     optimizer = optim.Adam(deepcod_model.parameters(), lr=5e-4)
 
     for epoch in range(100):
+        # set training mode
+        deepcod_model.train()
+
         print(f'Starting epoch {epoch}')
         pbar = enumerate(dataloader)
-        # test_counter = 0
         if rank in [-1, 0]:
             pbar = tqdm(pbar, total=nb)  # progress bar
 
@@ -116,11 +116,15 @@ def pretrain_deepcod(hyp, opt, device):
             optimizer.step()
             running_loss += loss.item()
 
+        # save model for this epoch
+        model_save_id = f'deepcod_epoch_{epoch}.pt'
+        last_deepcod_weights_path = wdir / model_save_id
+        torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
+
         # test after an epoch
+        test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
         print(f'epoch {epoch}, training loss: {running_loss / nb: .5f}, '
               f'time cost {time.time() - start_time: .5f}s.')
-        torch.save(deepcod_model.state_dict(), last_deepcod_weights_path)
-        test_loss = test.test_pretrain_deepcod(deepcod_model, device, testloader)
         print(f'epoch {epoch}, testing loss {test_loss: .5f} \n')
 
         # save best model
@@ -627,7 +631,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
+    parser.add_argument('--data', type=str, default='data/arl.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.finetune.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
@@ -681,6 +685,10 @@ if __name__ == '__main__':
         opt.project += 'fine-tune-deepcod'
     else:
         opt.project += 'train-yolo'
+
+    # set arl data
+    if 'arl' in opt.data:
+        opt.project += '-arl'
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1

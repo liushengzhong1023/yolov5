@@ -90,6 +90,8 @@ def test(data,
 
     # Configure
     yolo_model.eval()
+    deepcod_model.eval()
+
     if isinstance(data, str):
         is_coco = data.endswith('coco.yaml')
         with open(data) as f:
@@ -343,6 +345,9 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
         dataloader = create_dataloader(data[opt.task], imgsz, opt.batch_size, 32, opt, pad=0.5, rect=False,
                                        prefix=colorstr(f'{opt.task}: '), workers=4)[0]
 
+    # set model to eval
+    deepcod_model.eval()
+
     # test loss
     loss_sum = 0
     iter_counter = 0
@@ -379,7 +384,7 @@ if __name__ == '__main__':
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.6, help='IOU threshold for NMS')
     parser.add_argument('--task', default='val', help='train, val, test, speed or study')
-    parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
     parser.add_argument('--single-cls', action='store_true', help='treat as single-class dataset')
     parser.add_argument('--augment', action='store_true', help='augmented inference')
@@ -395,7 +400,7 @@ if __name__ == '__main__':
     # for offloading
     parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp/weights/best_deepcod.pt',
+                                                              'pretrain-deepcod/exp/weights/last_deepcod.pt',
                         help='initial weights path for enc-decoder')
     parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',
