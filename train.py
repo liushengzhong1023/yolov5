@@ -85,7 +85,7 @@ def pretrain_deepcod(hyp, opt, device):
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     nb = len(dataloader)  # number of batches
 
-    testloader = create_dataloader(test_path, imgsz_test, batch_size, 32, opt,  # testloader
+    testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, 32, opt,  # testloader
                                    hyp=hyp, cache=opt.cache_images and not opt.notest, rect=False, rank=-1,
                                    world_size=opt.world_size, workers=opt.workers,
                                    pad=0.5, prefix=colorstr('val: '))[0]
@@ -689,6 +689,7 @@ if __name__ == '__main__':
     # set arl data
     if 'arl' in opt.data:
         opt.project += '-arl'
+        opt.weights = 'weights/best_synthV1_yolov5s.pt'
 
     # Set DDP variables
     opt.world_size = int(os.environ['WORLD_SIZE']) if 'WORLD_SIZE' in os.environ else 1

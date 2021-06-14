@@ -378,7 +378,7 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5s.pt', help='model.pt path(s)')
-    parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
+    parser.add_argument('--data', type=str, default='data/arl.yaml', help='*.data path')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
@@ -414,6 +414,10 @@ if __name__ == '__main__':
     opt.data = check_file(opt.data)  # check file
     print(opt)
     # check_requirements()
+
+    # set arl data
+    if 'arl' in opt.data:
+        opt.weights = 'weights/best_synthV1_yolov5s.pt'
 
     if opt.task in ('train', 'val', 'test'):  # run normally
         if opt.deepcod_option == 'test_pretrain_deepcod':
