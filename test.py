@@ -75,8 +75,7 @@ def test(data,
 
         # define and load the DeepCOD model
         if opt.deepcod_option == 'test_fine_tune_deepcod':
-            compress_ratio = 1 / 12. if 'coco' in opt.data else 1 / 16.
-            deepcod_model = DeepCOD(compress_ratio).to(device)
+            deepcod_model = DeepCOD().to(device)
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -333,8 +332,7 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
     # load the model
     if opt is not None:
         device = select_device(opt.device)
-        compress_ratio = 1 / 12. if 'coco' in opt.data else 1 / 16.
-        deepcod_model = DeepCOD(compress_ratio).to(device)
+        deepcod_model = DeepCOD().to(device)
         if opt.deepcod_weights.endswith('.pt'):
             deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -402,12 +400,12 @@ if __name__ == '__main__':
     # for offloading
     parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp/weights/last_deepcod.pt',
+                                                              'pretrain-deepcod-arl/exp3/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
     parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',
                         help='The path to save the reconstructed images.')
-    parser.add_argument('-deepcod_option', type=str, default='test_pretrain_deepcod',
+    parser.add_argument('-deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
     opt = parser.parse_args()
 
