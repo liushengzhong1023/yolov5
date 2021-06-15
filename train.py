@@ -64,7 +64,8 @@ def pretrain_deepcod(hyp, opt, device):
     min_test_loss = np.inf
 
     # define the deepcod model
-    deepcod_model = DeepCOD().to(device)
+    compress_ratio = 1 / 12. if 'coco' in opt.data else 1 / 16.
+    deepcod_model = DeepCOD(compress_ratio).to(device)
 
     # decide image sizes
     imgsz, imgsz_test = [check_img_size(x, 32) for x in opt.img_size]  # verify imgsz are gs-multiples
@@ -91,7 +92,10 @@ def pretrain_deepcod(hyp, opt, device):
                                    pad=0.5, prefix=colorstr('val: '))[0]
 
     # define optimizer
-    optimizer = optim.Adam(deepcod_model.parameters(), lr=5e-4)
+    optimizer = optim.Adam(deepcod_model.parameters(), lr=1e-3)
+
+    # define learning rate scheduler
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.2)
 
     for epoch in range(100):
         # set training mode
@@ -131,6 +135,9 @@ def pretrain_deepcod(hyp, opt, device):
         if test_loss < min_test_loss:
             min_test_loss = test_loss
             torch.save(deepcod_model.state_dict(), best_deepcod_weights_path)
+
+        # update learning rate scheduler
+        scheduler.step()
 
     print('Finished Training')
 

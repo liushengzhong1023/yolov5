@@ -75,7 +75,8 @@ def test(data,
 
         # define and load the DeepCOD model
         if opt.deepcod_option == 'test_fine_tune_deepcod':
-            deepcod_model = DeepCOD().to(device)
+            compress_ratio = 1 / 12. if 'coco' in opt.data else 1 / 16.
+            deepcod_model = DeepCOD(compress_ratio).to(device)
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -332,7 +333,8 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
     # load the model
     if opt is not None:
         device = select_device(opt.device)
-        deepcod_model = DeepCOD().to(device)
+        compress_ratio = 1 / 12. if 'coco' in opt.data else 1 / 16.
+        deepcod_model = DeepCOD(compress_ratio).to(device)
         if opt.deepcod_weights.endswith('.pt'):
             deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
