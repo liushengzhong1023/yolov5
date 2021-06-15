@@ -7,9 +7,9 @@
 
 
 # train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
-train: ../VisDrone/VisDrone2019-DET-train/images  # 6471 images
-val: ../VisDrone/VisDrone2019-DET-val/images  # 548 images
-test: ../VisDrone/VisDrone2019-DET-test-dev/images  # 1610 images
+train: /home/sl29/data/VisDrone/VisDrone2019-DET-train/images  # 6471 images
+val: /home/sl29/data/VisDrone/VisDrone2019-DET-val/images  # 548 images
+test: /home/sl29/data/VisDrone/VisDrone2019-DET-test-dev/images  # 1610 images
 
 # number of classes
 nc: 10
@@ -53,7 +53,7 @@ download: |
 
 
   # Download
-  dir = Path('../VisDrone')  # dataset directory
+  dir = Path('/home/sl29/data/VisDrone/')  # dataset directory
   urls = ['https://github.com/ultralytics/yolov5/releases/download/v1.0/VisDrone2019-DET-train.zip',
           'https://github.com/ultralytics/yolov5/releases/download/v1.0/VisDrone2019-DET-val.zip',
           'https://github.com/ultralytics/yolov5/releases/download/v1.0/VisDrone2019-DET-test-dev.zip',
