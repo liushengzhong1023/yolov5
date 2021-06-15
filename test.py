@@ -398,14 +398,14 @@ if __name__ == '__main__':
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
 
     # for offloading
-    parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
+    parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
                                                               'pretrain-deepcod-arl/exp3/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
-    parser.add_argument('-deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
+    parser.add_argument('--deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                    'val_reconstructed_pretrained/',
                         help='The path to save the reconstructed images.')
-    parser.add_argument('-deepcod_option', type=str, default='test_fine_tune_deepcod',
+    parser.add_argument('--deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
     opt = parser.parse_args()
 

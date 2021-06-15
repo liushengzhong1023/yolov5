@@ -673,15 +673,15 @@ if __name__ == '__main__':
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
 
     # for offloading
-    parser.add_argument('-deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
+    parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
                                                               'offloading_pytorch/yolov5/offloading_runs/'
                                                               'pretrain-deepcod/exp/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
-    parser.add_argument('-deepcod_option', type=str, default='fine_tune_deepcod',
+    parser.add_argument('--deepcod_option', type=str, default='fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
-    parser.add_argument('-deepcod_yolo_loss', type=str, default='yolo_mse',
+    parser.add_argument('--deepcod_yolo_loss', type=str, default='yolo_mse',
                         help='The loss of supervision from YOLO to DeepCOD.')
-    parser.add_argument('-reconst_loss_scale', type=float, default=10.,
+    parser.add_argument('--reconst_loss_scale', type=float, default=10.,
                         help='Scale for the reconstruction loss.')
     opt = parser.parse_args()
 
