@@ -75,7 +75,7 @@ def test(data,
 
         # define and load the DeepCOD model
         if opt.deepcod_option == 'test_fine_tune_deepcod':
-            deepcod_model = DeepCOD().to(device)
+            deepcod_model = DeepCOD(compress_ratio=1 / opt.compress_ratio).to(device)
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -378,7 +378,7 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(prog='test.py')
     parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5s.pt', help='model.pt path(s)')
-    parser.add_argument('--data', type=str, default='data/arl.yaml', help='*.data path')
+    parser.add_argument('--data', type=str, default='data/coco.yaml', help='*.data path')
     parser.add_argument('--batch-size', type=int, default=1, help='size of each image batch')
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.001, help='object confidence threshold')
@@ -399,15 +399,22 @@ if __name__ == '__main__':
 
     # for offloading
     parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                              'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod-arl/exp3/weights/best_deepcod.pt',
+                                                               'offloading_pytorch/yolov5/offloading_runs/'
+                                                               'pretrain-deepcod',
                         help='initial weights path for enc-decoder')
     parser.add_argument('--deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
-                                                                   'val_reconstructed_pretrained/',
+                                                                    'val_reconstructed_pretrained/',
                         help='The path to save the reconstructed images.')
     parser.add_argument('--deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
+    parser.add_argument('--compress_ratio', type=float, default=12.,
+                        help='The compression ratio of DeepCOD model.')
     opt = parser.parse_args()
+
+    # automatic decide deepcod_weights
+    dataset_id = os.path.basename(opt.data).split('.')[0]
+    opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id + '_compress-' + str(opt.compress_ratio),
+                                       'weights/best_deepcod.pt')
 
     # call the coco eval API if we are evaluating coco
     opt.save_json |= opt.data.endswith('coco.yaml')

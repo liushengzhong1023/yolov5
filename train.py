@@ -64,7 +64,7 @@ def pretrain_deepcod(hyp, opt, device):
     min_test_loss = np.inf
 
     # define the deepcod model
-    deepcod_model = DeepCOD().to(device)
+    deepcod_model = DeepCOD(compress_ratio=1 / opt.compress_ratio).to(device)
 
     # decide image sizes
     imgsz, imgsz_test = [check_img_size(x, 32) for x in opt.img_size]  # verify imgsz are gs-multiples
@@ -94,7 +94,7 @@ def pretrain_deepcod(hyp, opt, device):
     optimizer = optim.Adam(deepcod_model.parameters(), lr=1e-3)
 
     # define learning rate scheduler
-    step = 10 if 'coco' in opt.data else 5
+    step = 8 if 'coco' in opt.data else 5
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step, gamma=0.2)
 
     for epoch in range(100):
@@ -142,7 +142,6 @@ def pretrain_deepcod(hyp, opt, device):
     print('Finished Training')
 
 
-# @profile
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank = \
@@ -373,11 +372,12 @@ def train(hyp, opt, device, tb_writer=None):
                 f'Starting training for {epochs} epochs...')
 
     for epoch in range(start_epoch, epochs):  # epoch ------------------------------------------------------------------
-        yolo_model.train()
-
         # set deepcod to training mode
         if opt.deepcod_option == 'fine_tune_deepcod':
             deepcod_model.train()
+            yolo_model.train()
+        else:
+            yolo_model.train()
 
         # Update image weights (optional)
         if opt.image_weights:
@@ -638,13 +638,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/arl.yaml', help='data.yaml path')
+    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.finetune.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
     parser.add_argument('--img-size', nargs='+', type=int, default=[640, 640], help='[train, test] image sizes')
     parser.add_argument('--workers', type=int, default=1, help='maximum number of dataloader workers')
     parser.add_argument('--project', default='offloading_runs/', help='save to project/name')
+    parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--device', default='1', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
 
     parser.add_argument('--rect', action='store_true', help='rectangular training')
@@ -662,7 +663,6 @@ if __name__ == '__main__':
     parser.add_argument('--sync-bn', action='store_true', help='use SyncBatchNorm, only available in DDP mode')
     parser.add_argument('--local_rank', type=int, default=-1, help='DDP parameter, do not modify')
     parser.add_argument('--entity', default=None, help='W&B entity')
-    parser.add_argument('--name', default='exp', help='save to project/name')
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--quad', action='store_true', help='quad dataloader')
     parser.add_argument('--linear-lr', action='store_true', help='linear LR')
@@ -674,15 +674,17 @@ if __name__ == '__main__':
 
     # for offloading
     parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                              'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp/weights/best_deepcod.pt',
+                                                               'offloading_pytorch/yolov5/offloading_runs/'
+                                                               'pretrain-deepcod/exp2/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
-    parser.add_argument('--deepcod_option', type=str, default='fine_tune_deepcod',
+    parser.add_argument('--deepcod_option', type=str, default='pretrain_deepcod',
                         help='Option of dealing with deepcod model')
-    parser.add_argument('--deepcod_yolo_loss', type=str, default='yolo_mse',
+    parser.add_argument('--deepcod_yolo_loss', type=str, default='yolo_loss',
                         help='The loss of supervision from YOLO to DeepCOD.')
-    parser.add_argument('--reconst_loss_scale', type=float, default=10.,
+    parser.add_argument('--reconst_loss_scale', type=float, default=1.,
                         help='Scale for the reconstruction loss.')
+    parser.add_argument('--compress_ratio', type=float, default=12.,
+                        help='The compression ratio of DeepCOD model.')
     opt = parser.parse_args()
 
     # decide saving path for deepcod/yolo
@@ -692,6 +694,9 @@ if __name__ == '__main__':
         opt.project += 'fine-tune-deepcod'
     else:
         opt.project += 'train-yolo'
+
+    # decide name of model saving
+    opt.name = os.path.basename(opt.data).split('.')[0] + '_compress-' + str(opt.compress_ratio)
 
     # set arl data
     if 'arl' in opt.data:
