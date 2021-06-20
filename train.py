@@ -64,7 +64,7 @@ def pretrain_deepcod(hyp, opt, device):
     min_test_loss = np.inf
 
     # define the deepcod model
-    deepcod_model = DeepCOD(compress_ratio=1 / opt.compress_ratio).to(device)
+    deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio, quant_bits=opt.quant_bits).to(device)
 
     # decide image sizes
     imgsz, imgsz_test = [check_img_size(x, 32) for x in opt.img_size]  # verify imgsz are gs-multiples
@@ -208,7 +208,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # define and load the DeepCOD model
     if opt.deepcod_option == 'fine_tune_deepcod':
-        deepcod_model = DeepCOD().to(device)
+        deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio, quant_bits=opt.quant_bits).to(device)
         if opt.deepcod_weights.endswith('.pt'):
             deepcod_model.load_state_dict(torch.load(opt.deepcod_weights))
 
@@ -685,6 +685,8 @@ if __name__ == '__main__':
                         help='Scale for the reconstruction loss.')
     parser.add_argument('--compress_ratio', type=float, default=12.,
                         help='The compression ratio of DeepCOD model.')
+    parser.add_argument('--quant_bits', type=int, default=4,
+                        help='The number of bits used in the quantization.')
     opt = parser.parse_args()
 
     # decide saving path for deepcod/yolo
@@ -696,7 +698,10 @@ if __name__ == '__main__':
         opt.project += 'train-yolo'
 
     # decide name of model saving
-    opt.name = os.path.basename(opt.data).split('.')[0] + '_compress-' + str(opt.compress_ratio)
+    opt.name = os.path.basename(opt.data).split('.')[0] + \
+               '_compress-' + str(int(opt.compress_ratio)) + \
+               '_quant-bits-' + str(opt.quant_bits) + \
+               '_exp'
 
     # set arl data
     if 'arl' in opt.data:
