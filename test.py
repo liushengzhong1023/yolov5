@@ -416,7 +416,7 @@ if __name__ == '__main__':
     # automatic decide deepcod_weights
     dataset_id = os.path.basename(opt.data).split('.')[0]
     opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id + '_compress-' + str(int(opt.compress_ratio)) + \
-                                       '_quant-bits-' + str(opt.quant_bits) + '_exp',
+                                       '_quant-bits-' + str(opt.quant_bits) + '_exp4',
                                        'weights/best_deepcod.pt')
 
     # call the coco eval API if we are evaluating coco
