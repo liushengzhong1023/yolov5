@@ -75,7 +75,10 @@ def test(data,
 
         # define and load the DeepCOD model
         if opt.deepcod_option == 'test_fine_tune_deepcod':
-            deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio, quant_bits=opt.quant_bits).to(device)
+            deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio,
+                                    quant_bits=opt.quant_bits,
+                                    use_atten2=opt.atten2).to(device)
+
             if opt.deepcod_weights.endswith('.pt'):
                 deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -332,7 +335,10 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
     # load the model
     if opt is not None:
         device = select_device(opt.device)
-        deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio, quant_bits=opt.quant_bits).to(device)
+        deepcod_model = DeepCOD(compress_ratio=1. / opt.compress_ratio,
+                                quant_bits=opt.quant_bits,
+                                use_atten2=opt.atten2).to(device)
+
         if opt.deepcod_weights.endswith('.pt'):
             deepcod_model.load_state_dict(torch.load(opt.deepcod_weights, map_location=device))
 
@@ -411,13 +417,22 @@ if __name__ == '__main__':
                         help='The compression ratio of DeepCOD model.')
     parser.add_argument('--quant_bits', type=int, default=4,
                         help='The number of bits used in the quantization.')
+    parser.add_argument('--atten2', action='store_true',
+                        help='Whether to use the second self-attention layer or not.')
     opt = parser.parse_args()
 
     # automatic decide deepcod_weights
     dataset_id = os.path.basename(opt.data).split('.')[0]
-    opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id + '_compress-' + str(int(opt.compress_ratio)) + \
-                                       '_quant-bits-' + str(opt.quant_bits) + '_exp4',
-                                       'weights/best_deepcod.pt')
+    if opt.atten2:
+        opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id +
+                                           '_compress-' + str(int(opt.compress_ratio)) + \
+                                           '_quant-bits-' + str(opt.quant_bits) + '_wAtten2_exp',
+                                           'weights/best_deepcod.pt')
+    else:
+        opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id +
+                                           '_compress-' + str(int(opt.compress_ratio)) + \
+                                           '_quant-bits-' + str(opt.quant_bits) + '_exp',
+                                           'weights/best_deepcod.pt')
 
     # call the coco eval API if we are evaluating coco
     opt.save_json |= opt.data.endswith('coco.yaml')
