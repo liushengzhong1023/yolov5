@@ -138,6 +138,7 @@ def test(data,
                 if (opt is not None and opt.deepcod_option == 'test_fine_tune_deepcod') or \
                         (training and train_deepcod_option == 'fine_tune_deepcod'):
                     _, _, reconst_img = deepcod_model(img)
+
                     # Run model
                     t = time_synchronized()
                     out, train_out = yolo_model(reconst_img, augment=augment)  # inference and training outputs
@@ -349,7 +350,7 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
                 data = yaml.safe_load(f)
         check_dataset(data)  # check
         dataloader = create_dataloader(data[opt.task], imgsz, opt.batch_size, 32, opt, pad=0.5, rect=False,
-                                       prefix=colorstr(f'{opt.task}: '), workers=4)[0]
+                                       prefix=colorstr(f'{opt.task}: '), workers=1)[0]
 
     # set model to eval
     deepcod_model.eval()
@@ -370,7 +371,8 @@ def test_pretrain_deepcod(deepcod_model, device, dataloader, opt=None):
                 # print(f'DeepCOD reconstructing time: {t2-t1}s')
 
                 iter_counter += 1
-                loss_sum += F.mse_loss(reconst_img, img)
+                loss = F.mse_loss(reconst_img, img)
+                loss_sum += loss
 
                 # save the reconstructed images
                 if opt is not None:

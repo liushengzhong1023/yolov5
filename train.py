@@ -87,13 +87,14 @@ def pretrain_deepcod(hyp, opt, device):
                                             image_weights=opt.image_weights, quad=opt.quad, prefix=colorstr('train: '))
     nb = len(dataloader)  # number of batches
 
-    testloader = create_dataloader(test_path, imgsz_test, batch_size * 2, 32, opt,  # testloader
+    testloader = create_dataloader(test_path, imgsz_test, batch_size, 32, opt,  # testloader
                                    hyp=hyp, cache=opt.cache_images and not opt.notest, rect=False, rank=-1,
                                    world_size=opt.world_size, workers=opt.workers,
                                    pad=0.5, prefix=colorstr('val: '))[0]
 
     # define optimizer
-    optimizer = optim.Adam(deepcod_model.parameters(), lr=1e-3)
+    start_lr = 3e-4 if opt.atten2 else 1e-3
+    optimizer = optim.Adam(deepcod_model.parameters(), lr=start_lr)
 
     # define learning rate scheduler
     step = 8 if 'coco' in opt.data else 5
