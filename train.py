@@ -366,7 +366,7 @@ def train(hyp, opt, device, tb_writer=None):
 
     # Start training
     t0 = time.time()
-    nw = max(round(hyp['warmup_epochs'] * nb), 1000)  # number of warmup iterations, max(3 epochs, 1k iterations)
+    nw = max(round(hyp['warmup_epochs'] * nb), 10)  # number of warmup iterations, max(3 epochs, 1k iterations)
     maps = np.zeros(nc)  # mAP per class
     results = (0, 0, 0, 0, 0, 0, 0)  # P, R, mAP@.5, mAP@.5-.95, val_loss(box, obj, cls)
     scheduler.last_epoch = start_epoch - 1  # do not move
@@ -452,16 +452,16 @@ def train(hyp, opt, device, tb_writer=None):
                     # print(reconst_imgs.type(), reconst_imgs.shape)
 
                     # shape: [batch, 3, 80, 80, 85], [batch, 3, 40, 40, 85], [batch, 3, 20, 20, 85]
-                    reconst_pred = yolo_model(reconst_imgs)
+                    reconst_pred = yolo_model(reconst_imgs)[1]
 
                     if opt.deepcod_yolo_loss == 'yolo_mse':
-                        pred = yolo_model(imgs)
+                        pred = yolo_model(imgs)[1]
                         loss = F.mse_loss(reconst_pred[0], pred[0])
                         for i in range(1, len(reconst_pred)):
                             loss += F.mse_loss(reconst_pred[i], pred[i])
                     else:
                         # loss scaled by batch_size
-                        loss, _ = compute_loss(reconst_pred, targets.to(device), fine_tune_deepcod=True)
+                        loss, _ = compute_loss(reconst_pred, targets.to(device))
 
                     # add reconst loss to loss of YOLO supervision
                     loss += reconst_loss
