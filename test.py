@@ -407,7 +407,8 @@ if __name__ == '__main__':
 
     # for offloading
     parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                               'offloading_pytorch/yolov5/offloading_runs/',
+                                                               'offloading_pytorch/yolov5/offloading_runs/'
+                                                               'pretrain-deepcod',
                         help='initial weights path for enc-decoder')
     parser.add_argument('--deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                     'val_reconstructed_pretrained/',
@@ -421,12 +422,6 @@ if __name__ == '__main__':
     parser.add_argument('--atten2', action='store_true',
                         help='Whether to use the second self-attention layer or not.')
     opt = parser.parse_args()
-
-    # decide deepcod folder
-    if opt.deepcod_option == 'test_pretrain_deepcod':
-        opt.deepcod_weights = os.path.join(opt.deepcod_weights, 'pretrain-deepcod')
-    elif opt.deepcod_option == 'test_fine_tune_deepcod':
-        opt.projdeepcod_weightsect = os.path.join(opt.deepcod_weights, 'fine-tune-deepcod')
 
     # automatic decide deepcod_weights
     dataset_id = os.path.basename(opt.data).split('.')[0]

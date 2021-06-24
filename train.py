@@ -97,7 +97,7 @@ def pretrain_deepcod(hyp, opt, device):
     optimizer = optim.Adam(deepcod_model.parameters(), lr=start_lr)
 
     # define learning rate scheduler
-    step = 8 if 'coco' in opt.data else 5
+    step = 10 if 'coco' in opt.data else 5
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step, gamma=0.2)
 
     for epoch in range(100):
@@ -373,10 +373,7 @@ def train(hyp, opt, device, tb_writer=None):
     scaler = amp.GradScaler(enabled=cuda)
 
     # define the YOLO loss
-    if opt.deepcod_option == 'fine_tune_deepcod':
-        compute_loss = ComputeLoss(yolo_model, fine_tune_deepcod=True)
-    else:
-        compute_loss = ComputeLoss(yolo_model)
+    compute_loss = ComputeLoss(yolo_model)
 
     logger.info(f'Image sizes {imgsz} train, {imgsz_test} test\n'
                 f'Using {dataloader.num_workers} dataloader workers\n'
@@ -464,7 +461,7 @@ def train(hyp, opt, device, tb_writer=None):
                             loss += F.mse_loss(reconst_pred[i], pred[i])
                     else:
                         # loss scaled by batch_size
-                        loss, _ = compute_loss(reconst_pred, targets.to(device))
+                        loss, _ = compute_loss(reconst_pred, targets.to(device), fine_tune_deepcod=True)
 
                     # add reconst loss to loss of YOLO supervision
                     loss += reconst_loss
