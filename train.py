@@ -145,7 +145,7 @@ def pretrain_deepcod(hyp, opt, device):
     print('Finished Training')
 
 
-def fine_tune_deepcod(hyp, opt, device):
+def fine_tune_deepcod_v2(hyp, opt, device):
     '''
     Fine tune the DeepCOD model with YOLO supervision.
     :param hyp:
@@ -891,9 +891,9 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     # decide saving path for deepcod/yolo
-    if opt.deepcod_option == 'pretrain_deepcod':
+    if 'pretrain_deepcod' in opt.deepcod_option:
         opt.project += 'pretrain-deepcod'
-    elif opt.deepcod_option == 'fine_tune_deepcod':
+    elif 'fine_tune_deepcod' in opt.deepcod_option:
         opt.project += 'fine-tune-deepcod'
     else:
         opt.project += 'train-yolo'
@@ -914,9 +914,10 @@ if __name__ == '__main__':
         opt.deepcod_weights = os.path.join(opt.deepcod_weights, opt.name,
                                            'weights/best_deepcod.pt')
 
-    if opt.deepcod_option == 'fine_tune_deepcod':
+    if 'fine_tune_deepcod' in opt.deepcod_option:
+        suffix = '_v2_exp' if 'v2' in opt.deepcod_option else '_exp'
         opt.name = opt.name[:-4] + '_' + opt.deepcod_yolo_loss + \
-                   '_scale-' + str(int(opt.reconst_loss_scale)) + '_exp'
+                   '_scale-' + str(int(opt.reconst_loss_scale)) + suffix
 
     # set arl data
     if 'arl' in opt.data:
@@ -971,8 +972,8 @@ if __name__ == '__main__':
     if opt.deepcod_option == 'pretrain_deepcod':
         # torch.set_num_threads(1)
         pretrain_deepcod(hyp, opt, device)
-    elif opt.deepcod_option == 'fine_tune_deepcod':
-        fine_tune_deepcod(hyp, opt, device)
+    elif opt.deepcod_option == 'fine_tune_deepcod_v2':
+        fine_tune_deepcod_v2(hyp, opt, device)
     elif not opt.evolve:
         # torch.set_num_threads(1)
         tb_writer = None  # init loggers

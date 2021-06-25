@@ -57,7 +57,7 @@ def test(data,
     if training:  # called by train.py
         device = next(yolo_model.parameters()).device  # get model device
 
-        if train_deepcod_option == 'fine_tune_deepcod':
+        if 'fine_tune_deepcod' in train_deepcod_option:
             deepcod_model = train_deepcod_model
 
     else:  # called directly
@@ -93,7 +93,8 @@ def test(data,
 
     # Configure
     yolo_model.eval()
-    deepcod_model.eval()
+    if 'fine_tune_deepcod' in train_deepcod_option or 'fine_tune_deepcod' in opt.deepcod_option:
+        deepcod_model.eval()
 
     if isinstance(data, str):
         is_coco = data.endswith('coco.yaml')
@@ -136,7 +137,7 @@ def test(data,
             with amp.autocast(enabled=True):
                 # reconstruct first if needed
                 if (opt is not None and opt.deepcod_option == 'test_fine_tune_deepcod') or \
-                        (training and train_deepcod_option == 'fine_tune_deepcod'):
+                        (training and 'fine_tune_deepcod' in train_deepcod_option):
                     _, _, reconst_img = deepcod_model(img)
 
                     # Run model
