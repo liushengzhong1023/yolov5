@@ -95,8 +95,8 @@ def detect(opt):
             #   1) concated output bboxes, [batch_size, #bbox, 80(coco classes)+5],
             #   2) list of output at each output layer with shape [batch_size, #anchor, h, w, 80+5]
             pred = model(img, augment=opt.augment)[0]
-            print(pred.shape)
-            print([e.shape for e in model(img, augment=opt.augment)[1]])
+            # print(pred.shape)
+            # print([e.shape for e in model(img, augment=opt.augment)[1]])
             # Apply NMS
             pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres,
                                        classes=opt.classes, agnostic=opt.agnostic_nms)
@@ -184,7 +184,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='weights/yolov5s.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str, default='data/images', help='source')  # file/folder, 0 for webcam
-    parser.add_argument('--img-size', type=int, default=1080, help='inference size (pixels)')
+    parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')

@@ -8,14 +8,15 @@
 #     /yolov5
 
 # Download/unzip images
-d='../argoverse/' # unzip directory
-mkdir $d
-url=https://argoverse-hd.s3.us-east-2.amazonaws.com/
-f=Argoverse-HD-Full.zip
-curl -L $url$f -o $f && unzip -q $f -d $d && rm $f &# download, unzip, remove in background
-wait                                              # finish background tasks
+d='/home/sl29/data/argoverse' # unzip directory
 
-cd ../argoverse/Argoverse-1.1/
+#mkdir $d
+#url=https://argoverse-hd.s3.us-east-2.amazonaws.com/
+#f=Argoverse-HD-Full.zip
+#curl -L $url$f -o $f && unzip -q $f -d $d && rm $f &# download, unzip, remove in background
+#wait                                              # finish background tasks
+
+cd /home/sl29/data/argoverse/Argoverse-1.1/
 ln -s tracking images
 
 cd ../Argoverse-HD/annotations/
