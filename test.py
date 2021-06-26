@@ -54,6 +54,7 @@ def test(data,
          train_deepcod_model=None):
     # Initialize/load model and set device
     training = yolo_model is not None
+    deepcod_model = None
     if training:  # called by train.py
         device = next(yolo_model.parameters()).device  # get model device
 
@@ -93,7 +94,7 @@ def test(data,
 
     # Configure
     yolo_model.eval()
-    if 'fine_tune_deepcod' in train_deepcod_option or 'fine_tune_deepcod' in opt.deepcod_option:
+    if deepcod_model is not None:
         deepcod_model.eval()
 
     if isinstance(data, str):
@@ -408,8 +409,7 @@ if __name__ == '__main__':
 
     # for offloading
     parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                               'pretrain-deepcod',
+                                                               'offloading_pytorch/yolov5/offloading_runs/',
                         help='initial weights path for enc-decoder')
     parser.add_argument('--deepcod_reconst_path', type=str, default='/home/sl29/data/COCO/images/'
                                                                     'val_reconstructed_pretrained/',
@@ -418,24 +418,36 @@ if __name__ == '__main__':
                         help='Option of dealing with deepcod model')
     parser.add_argument('--compress_ratio', type=float, default=12.,
                         help='The compression ratio of DeepCOD model.')
-    parser.add_argument('--quant_bits', type=int, default=4,
+    parser.add_argument('--quant_bits', type=int, default=5,
                         help='The number of bits used in the quantization.')
+    parser.add_argument('--reconst_loss_scale', type=float, default=1.,
+                        help='Scale for the reconstruction loss.')
+    parser.add_argument('--deepcod_yolo_loss', type=str, default='yolo_loss',
+                        help='The loss of supervision from YOLO to DeepCOD.')
     parser.add_argument('--atten2', action='store_true',
                         help='Whether to use the second self-attention layer or not.')
     opt = parser.parse_args()
 
     # automatic decide deepcod_weights
+    opt.deepcod_weights += 'fine-tune-deepcod/'
+
     dataset_id = os.path.basename(opt.data).split('.')[0]
     if opt.atten2:
         opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id +
                                            '_compress-' + str(int(opt.compress_ratio)) + \
-                                           '_quant-bits-' + str(opt.quant_bits) + '_wAtten2_exp',
-                                           'weights/best_deepcod.pt')
+                                           '_quant-bits-' + str(opt.quant_bits) + '_wAtten2_exp')
     else:
         opt.deepcod_weights = os.path.join(opt.deepcod_weights, dataset_id +
                                            '_compress-' + str(int(opt.compress_ratio)) + \
-                                           '_quant-bits-' + str(opt.quant_bits) + '_exp',
-                                           'weights/best_deepcod.pt')
+                                           '_quant-bits-' + str(opt.quant_bits) + '_exp')
+
+    if 'fine-tune-deepcod' in opt.deepcod_weights:
+        suffix = '_v2_exp' if 'v2' in opt.deepcod_option else '_exp'
+        opt.deepcod_weights = opt.deepcod_weights[:-4] + '_' + opt.deepcod_yolo_loss + \
+                              '_scale-' + str(int(opt.reconst_loss_scale)) + suffix
+
+    # fetch the best weight
+    opt.deepcod_weights = os.path.join(opt.deepcod_weights, 'weights', 'best_deepcod.pt')
 
     # call the coco eval API if we are evaluating coco
     opt.save_json |= opt.data.endswith('coco.yaml')
