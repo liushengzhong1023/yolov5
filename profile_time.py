@@ -10,37 +10,32 @@ import torch.backends.cudnn as cudnn
 from numpy import random
 
 from models.experimental import attempt_load
-from utils.datasets import LoadStreams, LoadImages
-from utils.general import check_img_size, check_requirements, check_imshow, non_max_suppression, apply_classifier, \
-    scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box
-from utils.plots import plot_one_box
-from utils.torch_utils import select_device, load_classifier, time_synchronized
+from utils.general import non_max_suppression
+from utils.torch_utils import select_device, time_synchronized
+
+from uuid import getnode as get_mac
+
 
 # (height, width), sorted in increasing order of the height
-waymo_image_sizes = {
-    (64, 64): 24,
+image_sizes = {
+    (64, 64): 32,
     (128, 128): 24,
     (256, 256): 16,
-    (384, 384): 10,
-    (512, 512): 8,
+    (384, 384): 8,
+    (512, 512): 4,
     # the following mainly for merged scheduler
-    (960, 160): 4,
-    (1280, 320): 4,
-    # full frame
-    (1280, 1920): 2
+    (704, 1280): 2,
+    (960, 1280): 2
 }
 
-kitti_image_sizes = {
-    (64, 96): 32,
-    (128, 192): 32,
-    (256, 192): 16,
-    (256, 384): 16,
-    (256, 512): 8,
-    # the following mainly for merged scheduler
-    (384, 512): 8,
-    (384, 768): 8,
-    (384, 1280): 2,
-}
+def get_machine_mac():
+    '''
+    Get MAC address of current machine.
+    :return:
+    '''
+    mac = hex(get_mac())
+
+    return mac
 
 
 def read_time_profile(time_profile_file):
@@ -74,7 +69,7 @@ def profile_one_image_size(model, w, h, b, test_count, half, device):
     print("Profiling image size: ", image_size, ", batch size: ", b)
 
     # generate random data and warmup the model, data input is between [0, 1]
-    image_path = '/home/sl29/data/Waymo/validation_images/segment-2094681306939952000/1507658568795604-FRONT.jpeg'
+    image_path = '/home/sl29/data/AIC21/AIC21_Track3_MTMC_Tracking/test_images/S01_G0/c003/S01_G0_c003_1797.jpeg'
     random_data = cv2.imread(image_path)
 
     # convert color from BGR to RGB
@@ -144,15 +139,17 @@ def profile_one_image_size(model, w, h, b, test_count, half, device):
 
 
 if __name__ == '__main__':
-    profile_path = '/home/sl29/DeepScheduling/result/yolov5_result/yolov5_profiles'
-    model_list = ['yolov5s', 'yolov5m', 'yolov5l', 'yolov5x']
-    # model_list = ['yolov5m']
-    machine_name = str(np.loadtxt(os.path.join(profile_path, 'machine.txt'), dtype=str))
-    dataset = 'waymo'
+    profile_path = '/home/sl29/multi_camera_scheduling/result/yolov5_profiles/'
+    model_list = ['yolov5s', 'yolov5m', 'yolov5l']
+
+    if not os.path.exists(profile_path):
+        os.mkdir(profile_path)
+
+    machine_id = get_machine_mac()
 
     for model in model_list:
-        profile_file = os.path.join(profile_path, model + '_' + dataset + '_' + machine_name + '.json')
-        weight_file = "weights/" + model + ".pt"
+        profile_file = os.path.join(profile_path, model + '_' + machine_id + '.json')
+        weight_file = "/home/sl29/multi_camera_scheduling/model/yolov5/" + model + ".pt"
 
         # -------------------------------- Model Initialization --------------------------------
         # set device as the first GPU by default
@@ -177,11 +174,6 @@ if __name__ == '__main__':
 
         start = time.time()
 
-        if dataset == 'kitti':
-            image_sizes = kitti_image_sizes
-        else:
-            image_sizes = waymo_image_sizes
-
         for (h, w) in image_sizes:
             if w not in image_size_times:
                 image_size_times[w] = {}
@@ -199,7 +191,7 @@ if __name__ == '__main__':
                             continue
 
                 mean_inference_time, mean_postprocess_time = profile_one_image_size(model, w, h, b,
-                                                                                    500, half, device)
+                                                                                    2, half, device)
                 image_size_times[w][h][b] = {
                     'inference': mean_inference_time,
                     'postprocess': mean_postprocess_time
@@ -208,6 +200,11 @@ if __name__ == '__main__':
         # save the file
         with open(profile_file, 'w') as f:
             f.write(json.dumps(image_size_times, indent=4))
+
+        # send the file to eugene
+        cmd = f'rsync -av {profile_file} eugene:{profile_path}'
+        print(cmd)
+        os.system(cmd)
 
         end = time.time()
         print("------------------------------------------------------------------------")
