@@ -18,14 +18,14 @@ from uuid import getnode as get_mac
 
 # (height, width), sorted in increasing order of the height
 image_sizes = {
-    (64, 64),
-    (128, 128),
-    (256, 256),
-    (384, 384),
-    (512, 512),
+    (64, 64): 20,
+    (128, 128): 16,
+    (256, 256): 12,
+    (384, 384): 8,
+    (512, 512): 4,
     # the following mainly for merged scheduler
-    (704, 1280),
-    (960, 1280)
+    (704, 1280): 1,
+    (960, 1280): 1
 }
 
 def get_machine_mac():
