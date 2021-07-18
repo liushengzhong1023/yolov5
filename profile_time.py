@@ -18,14 +18,14 @@ from uuid import getnode as get_mac
 
 # (height, width), sorted in increasing order of the height
 image_sizes = {
-    (64, 64): 32,
-    (128, 128): 24,
-    (256, 256): 16,
-    (384, 384): 8,
-    (512, 512): 4,
+    (64, 64),
+    (128, 128),
+    (256, 256),
+    (384, 384),
+    (512, 512),
     # the following mainly for merged scheduler
-    (704, 1280): 2,
-    (960, 1280): 2
+    (704, 1280),
+    (960, 1280)
 }
 
 def get_machine_mac():
@@ -191,7 +191,7 @@ if __name__ == '__main__':
                             continue
 
                 mean_inference_time, mean_postprocess_time = profile_one_image_size(model, w, h, b,
-                                                                                    2, half, device)
+                                                                                    100, half, device)
                 image_size_times[w][h][b] = {
                     'inference': mean_inference_time,
                     'postprocess': mean_postprocess_time
