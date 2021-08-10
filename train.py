@@ -880,11 +880,11 @@ if __name__ == '__main__':
                         help='Option of dealing with deepcod model')
     parser.add_argument('--deepcod_yolo_loss', type=str, default='yolo_loss',
                         help='The loss of supervision from YOLO to DeepCOD.')
-    parser.add_argument('--reconst_loss_scale', type=float, default=1.,
+    parser.add_argument('--reconst_loss_scale', type=float, default=0.,
                         help='Scale for the reconstruction loss.')
-    parser.add_argument('--compress_ratio', type=float, default=12.,
+    parser.add_argument('--compress_ratio', type=float, default=16.,
                         help='The compression ratio of DeepCOD model.')
-    parser.add_argument('--quant_bits', type=int, default=4,
+    parser.add_argument('--quant_bits', type=int, default=5,
                         help='The number of bits used in the quantization.')
     parser.add_argument('--atten2', action='store_true',
                         help='Whether to use the second self-attention layer or not.')

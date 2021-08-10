@@ -416,7 +416,7 @@ if __name__ == '__main__':
                         help='The path to save the reconstructed images.')
     parser.add_argument('--deepcod_option', type=str, default='test_fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
-    parser.add_argument('--compress_ratio', type=float, default=12.,
+    parser.add_argument('--compress_ratio', type=float, default=16.,
                         help='The compression ratio of DeepCOD model.')
     parser.add_argument('--quant_bits', type=int, default=5,
                         help='The number of bits used in the quantization.')
@@ -429,7 +429,11 @@ if __name__ == '__main__':
     opt = parser.parse_args()
 
     # automatic decide deepcod_weights
-    opt.deepcod_weights += 'fine-tune-deepcod/'
+    if opt.deepcod_option == 'test_pretrain_deepcod':
+        opt.deepcod_weights += 'pretrain-deepcod/'
+    else:
+        opt.deepcod_weights += 'fine-tune-deepcod/'
+
 
     dataset_id = os.path.basename(opt.data).split('.')[0]
     if opt.atten2:
