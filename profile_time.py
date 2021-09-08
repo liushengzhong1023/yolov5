@@ -20,7 +20,9 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized
 waymo_image_sizes = {
     (64, 64): 24,
     (128, 128): 24,
+    (192, 192): 24,
     (256, 256): 16,
+    (320, 320): 16,
     (384, 384): 10,
     (512, 512): 8,
     # the following mainly for merged scheduler
