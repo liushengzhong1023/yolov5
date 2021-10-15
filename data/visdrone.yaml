@@ -4,12 +4,13 @@
 #   /parent_folder
 #     /VisDrone
 #     /yolov5
+# Original image size: 1400 x 788 or 1400 x 1050
 
 
 # train and val data as 1) directory: path/images/, 2) file: path/images.txt, or 3) list: [path1/images/, path2/images/]
-train: ../VisDrone/VisDrone2019-DET-train/images  # 6471 images
-val: ../VisDrone/VisDrone2019-DET-val/images  # 548 images
-test: ../VisDrone/VisDrone2019-DET-test-dev/images  # 1610 images
+train: /home/shengzhong/data/VisDrone/VisDrone2019-DET-train/images  # 6471 images
+val: /home/shengzhong/data/VisDrone/VisDrone2019-DET-val/images  # 548 images
+test: /home/shengzhong/data/VisDrone/VisDrone2019-DET-test-dev/images  # 1610 images
 
 # number of classes
 nc: 10
