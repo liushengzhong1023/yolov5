@@ -638,7 +638,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', type=str, default='weights/yolov5s.pt', help='initial weights path')
     parser.add_argument('--cfg', type=str, default='models/yolov5s.yaml', help='model.yaml path')
-    parser.add_argument('--data', type=str, default='data/arl.yaml', help='data.yaml path')
+    parser.add_argument('--data', type=str, default='data/coco.yaml', help='data.yaml path')
     parser.add_argument('--hyp', type=str, default='data/hyp.finetune.yaml', help='hyperparameters path')
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--batch-size', type=int, default=1, help='total batch size for all GPUs')
@@ -673,9 +673,7 @@ if __name__ == '__main__':
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
 
     # for offloading
-    parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                              'offloading_pytorch/yolov5/offloading_runs/'
-                                                              'pretrain-deepcod/exp/weights/best_deepcod.pt',
+    parser.add_argument('--deepcod_weights', type=str, default='offloading_runs/pretrain-deepcod/exp/weights/best_deepcod.pt',
                         help='initial weights path for enc-decoder')
     parser.add_argument('--deepcod_option', type=str, default='fine_tune_deepcod',
                         help='Option of dealing with deepcod model')
