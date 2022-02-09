@@ -884,7 +884,7 @@ if __name__ == '__main__':
                         help='Scale for the reconstruction loss.')
     parser.add_argument('--compress_ratio', type=float, default=12.,
                         help='The compression ratio of DeepCOD model.')
-    parser.add_argument('--quant_bits', type=int, default=4,
+    parser.add_argument('--quant_bits', type=int, default=5,
                         help='The number of bits used in the quantization.')
     parser.add_argument('--atten2', action='store_true',
                         help='Whether to use the second self-attention layer or not.')
@@ -904,15 +904,17 @@ if __name__ == '__main__':
                    '_compress-' + str(int(opt.compress_ratio)) + \
                    '_quant-bits-' + str(opt.quant_bits) + \
                    '_wAtten2_exp'
-        opt.deepcod_weights = os.path.join(opt.deepcod_weights, opt.name,
-                                           'weights/best_deepcod.pt')
+        # opt.deepcod_weights = os.path.join(opt.deepcod_weights, opt.name,
+        #                                    'weights/best_deepcod.pt')
+        opt.deepcod_weights = opt.deepcod_weights
     else:
         opt.name = os.path.basename(opt.data).split('.')[0] + \
                    '_compress-' + str(int(opt.compress_ratio)) + \
                    '_quant-bits-' + str(opt.quant_bits) + \
                    '_exp'
-        opt.deepcod_weights = os.path.join(opt.deepcod_weights, opt.name,
-                                           'weights/best_deepcod.pt')
+        # opt.deepcod_weights = os.path.join(opt.deepcod_weights, opt.name,
+        #                                    'weights/best_deepcod.pt')
+        opt.deepcod_weights = opt.deepcod_weights
 
     if 'fine_tune_deepcod' in opt.deepcod_option:
         suffix = '_v2_exp' if 'v2' in opt.deepcod_option else '_exp'
