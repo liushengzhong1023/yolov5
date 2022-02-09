@@ -872,9 +872,7 @@ if __name__ == '__main__':
     parser.add_argument('--artifact_alias', type=str, default="latest", help='version of dataset artifact to be used')
 
     # for deep compressive offloading
-    parser.add_argument('--deepcod_weights', type=str, default='/home/sl29/compressive_offloading_yolov5/src/'
-                                                               'offloading_pytorch/yolov5/offloading_runs/'
-                                                               'pretrain-deepcod/',
+    parser.add_argument('--deepcod_weights', type=str,
                         help='initial weights path for enc-decoder')
     parser.add_argument('--deepcod_option', type=str, default='pretrain_deepcod',
                         help='Option of dealing with deepcod model')
